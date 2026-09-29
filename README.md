@@ -1,5 +1,3 @@
----
-
 ### ⚠️ IMPORTANT NOTICE / DISCLAIMER
 
 **Original Author:** CactusPie
