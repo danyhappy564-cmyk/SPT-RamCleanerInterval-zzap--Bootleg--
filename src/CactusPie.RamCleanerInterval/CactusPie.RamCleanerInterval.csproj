@@ -1,50 +1,95 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\RamCleaner.local.props" Condition="Exists('..\RamCleaner.local.props')" />
 
   <PropertyGroup>
-    <TargetFramework>net472</TargetFramework>
-    <Version>1.0.0</Version>
-    <Authors>CactusPie</Authors>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>CactusPie.RamCleanerInterval</AssemblyName>
+    <RootNamespace>CactusPie.RamCleanerInterval</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <VersionPrefix>2.0.0</VersionPrefix>
+    <Version>$(VersionPrefix)</Version>
+    <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
+    <FileVersion>$(VersionPrefix).0</FileVersion>
+    <Authors>CactusPie (original), R_F (SPT 4.1 port)</Authors>
+    <Deterministic>true</Deterministic>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="BepInEx.Core" Version="5.4.21">
-      <ExcludeAssets>runtime</ExcludeAssets>
-    </PackageReference>
-  </ItemGroup>
+  <PropertyGroup>
+    <SptRoot Condition="'$(SptRoot)' == '' And '$(SPT_ROOT)' != ''">$(SPT_ROOT)</SptRoot>
+    <!-- Fork default: the maintainer's SPT 4.1 install. Override with -p:SptRoot=..., the
+         SPT_ROOT environment variable, or src\RamCleaner.local.props. -->
+    <SptRoot Condition="'$(SptRoot)' == ''">E:\SPT 4.1</SptRoot>
+    <!-- Release builds deploy straight into the SPT install by default (also from Visual Studio). -->
+    <DeployPlugin Condition="'$(DeployPlugin)' == '' And '$(Configuration)' == 'Release'">true</DeployPlugin>
+    <DeployPlugin Condition="'$(DeployPlugin)' == ''">false</DeployPlugin>
+    <Managed>$(SptRoot)\EscapeFromTarkov_Data\Managed</Managed>
+    <BepInExCore>$(SptRoot)\BepInEx\core</BepInExCore>
+    <PluginFolder>BepInEx\plugins\CactusPie.RamCleanerInterval</PluginFolder>
+  </PropertyGroup>
 
+  <!-- No spt-reflection / Harmony reference: the plugin patches nothing, it only reads memory
+       numbers and drives UnityEngine.Scripting.GarbageCollector. -->
   <ItemGroup>
-    <Reference Include="Aki.Common">
-      <HintPath>..\References\Aki.Common.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Aki.Reflection">
-      <HintPath>..\References\EFT_Managed\Aki.Reflection.dll</HintPath>
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>..\References\EFT_Managed\Assembly-CSharp.dll</HintPath>
+      <HintPath>$(Managed)\Assembly-CSharp.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Comfort">
-      <HintPath>..\References\EFT_Managed\Comfort.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Comfort.Unity">
-      <HintPath>..\References\EFT_Managed\Comfort.Unity.dll</HintPath>
+      <HintPath>$(Managed)\Comfort.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine">
-      <HintPath>..\References\EFT_Managed\UnityEngine.dll</HintPath>
+      <HintPath>$(Managed)\UnityEngine.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\References\EFT_Managed\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(Managed)\UnityEngine.CoreModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>..\References\EFT_Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <HintPath>$(Managed)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(Managed)\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>
+
+  <Target Name="ValidateSptRoot" BeforeTargets="ResolveReferences"
+          Condition="'$(SptRoot)' == '' Or !Exists('$(SptRoot)\EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll')">
+    <Error Text="Set SptRoot to a valid SPT installation using -p:SptRoot=&quot;C:\Path\To\SPT&quot;, the SPT_ROOT environment variable, or src\RamCleaner.local.props." />
+  </Target>
+
+  <Target Name="DeployToSpt" AfterTargets="Build" Condition="'$(DeployPlugin)' == 'true'">
+    <MakeDir Directories="$(SptRoot)\$(PluginFolder)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SptRoot)\$(PluginFolder)" />
+    <Message Text="Deployed $(TargetFileName) to $(SptRoot)\$(PluginFolder)" Importance="high" />
+  </Target>
+
+  <!-- Rule 2-2: every Release build also drops a ready-to-extract archive (unzip into the SPT folder)
+       in the repository's release\ folder. Skip with -p:SkipPackage=true. -->
+  <Target Name="PackageRelease" AfterTargets="Build"
+          Condition="'$(Configuration)' == 'Release' AND '$(SkipPackage)' != 'true'">
+    <PropertyGroup>
+      <PackageStageDir>$(IntermediateOutputPath)package\</PackageStageDir>
+      <PackageZipDir>$(MSBuildThisFileDirectory)..\..\release\</PackageZipDir>
+      <PackageZipPath>$(PackageZipDir)RamCleanerInterval-$(Version)-SPT4.1.zip</PackageZipPath>
+    </PropertyGroup>
+    <RemoveDir Directories="$(PackageStageDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PackageStageDir)$(PluginFolder)" />
+    <MakeDir Directories="$(PackageZipDir)" />
+    <Delete Files="$(PackageZipPath)" />
+    <ZipDirectory SourceDirectory="$(PackageStageDir)" DestinationFile="$(PackageZipPath)" Overwrite="true" />
+    <Message Text="Packaged $(PackageZipPath)" Importance="high" />
+  </Target>
 
 </Project>

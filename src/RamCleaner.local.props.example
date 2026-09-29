@@ -1,0 +1,6 @@
+<Project>
+  <!-- Copy to RamCleaner.local.props (git-ignored) when SPT is not installed at E:\SPT 4.1 -->
+  <PropertyGroup>
+    <SptRoot>C:\Path\To\SPT</SptRoot>
+  </PropertyGroup>
+</Project>
