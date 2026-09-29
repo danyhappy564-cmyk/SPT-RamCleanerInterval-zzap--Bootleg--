@@ -1,51 +1,74 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
+using System.Threading;
 using BepInEx;
 using BepInEx.Configuration;
+using Comfort.Common;
+using EFT;
 using UnityEngine;
 using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.0.0")]
-    public class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.1.0")]
+    public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
-        // Config keys stay English so the .cfg file is stable; everything the player sees in F12
-        // (category, name, description) is Korean through ConfigurationManagerAttributes.
-        private const string GcSection = "1. Auto GC";
-        private const string TrimSection = "2. Working set";
-        private const string GeneralSection = "3. General";
+        private const float TrimMaxDeferSeconds = 60f;
+        private const float RaidStartFallbackSeconds = 120f;
+        private const float UnloadMeasureDelaySeconds = 6f;
+        private const double WeakUnloadGb = 0.5;
 
-        private const string GcCategory = "1. 자동 메모리 정리 (GC) — 추천";
-        private const string TrimCategory = "2. 워킹셋 정리 (원본 RAM 클리너 방식)";
-        private const string GeneralCategory = "3. 공통 · 수동 실행 · 상태";
+        private enum AssetPhase
+        {
+            Idle,
+            WaitingForGc,
+            Unloading,
+            Measuring,
+        }
+
+        private readonly ConcurrentQueue<Action> _mainThread = new ConcurrentQueue<Action>();
 
         private GcRunner _gc;
-
-        private ConfigEntry<bool> _gcEnabled;
-        private ConfigEntry<float> _gcGrowthGb;
-        private ConfigEntry<float> _gcSliceMs;
-        private ConfigEntry<int> _gcCooldownSec;
-        private ConfigEntry<bool> _gcAllowBlocking;
-
-        private ConfigEntry<bool> _trimEnabled;
-        private ConfigEntry<bool> _trimOnlyLowRam;
-        private ConfigEntry<int> _trimLowRamPercent;
-        private ConfigEntry<int> _trimIntervalSec;
-        private ConfigEntry<bool> _trimAfterGc;
-
-        private ConfigEntry<bool> _onlyInRaid;
-        private ConfigEntry<bool> _showOverlay;
-        private ConfigEntry<int> _logIntervalSec;
+        private CombatTracker _combat;
+        private VramMonitor _vram;
 
         private MemorySnapshot _snapshot;
         private float _nextSample;
         private float _nextLog;
-        private float _lastTrim;
         private bool _inGame;
+        private bool _evaluateNow;
+
+        // GC
         private long _gcBaseline = -1;
+        private float _gcPendingSince = -1f;
         private bool _warnedNoIncremental;
+
+        // Working set trim (runs on a thread-pool thread)
+        private int _trimRunning;
+        private float _lastTrim;
+        private float _trimPendingSince = -1f;
+        private string _trimPendingReason;
+
+        // Asset unload
+        private AssetPhase _assetPhase = AssetPhase.Idle;
+        private string _assetReason;
+        private bool _assetAuto;
+        private AsyncOperation _assetOperation;
+        private MemorySnapshot _assetBefore;
+        private long _assetVramBefore;
+        private float _assetStart;
+        private float _assetDone;
+        private float _assetLongestFrame;
+        private float _raidStartedAt = -1f;
+        private float _inGameSince;
+        private bool _startUnloadDone;
+        private long _nativeBaseline = -1;
+        private float _lastUnload = float.NegativeInfinity;
+        private float _unloadPendingSince = -1f;
+        private int _weakUnloads;
+        private bool _autoUnloadStopped;
 
         private string _lastTrimResult = "아직 없음";
         private string _lastAssetResult = "아직 없음";
@@ -59,125 +82,35 @@ namespace CactusPie.RamCleanerInterval
         {
             _gc = new GcRunner(Logger);
             _gc.Finished += OnGcFinished;
+            _combat = new CombatTracker();
+            _combat.InventoryOpened += () => _evaluateNow = true;
+            _vram = new VramMonitor();
 
-            BindGcSettings();
-            BindTrimSettings();
-            BindGeneralSettings();
+            BindSettings();
 
             GarbageCollector.GCModeChanged += OnGcModeChanged;
 
             _lastTrim = Time.realtimeSinceStartup;
             Logger.LogInfo($"Loaded. incremental GC supported={GarbageCollector.isIncremental}, " +
                            $"slice default {GarbageCollector.incrementalTimeSliceNanoseconds / 1000000f:0.0}ms, " +
-                           $"system RAM {SystemInfo.systemMemorySize} MB, GC mode {GarbageCollector.GCMode}");
+                           $"system RAM {SystemInfo.systemMemorySize} MB, VRAM {SystemInfo.graphicsMemorySize} MB, GC mode {GarbageCollector.GCMode}");
         }
 
         internal void OnDestroy()
         {
             GarbageCollector.GCModeChanged -= OnGcModeChanged;
-        }
-
-        private void BindGcSettings()
-        {
-            _gcEnabled = Bind(GcSection, GcCategory, "Enabled", "자동 GC 정리 켜기", true,
-                "레이드 중에는 게임이 GC(안 쓰는 메모리를 치우는 청소부)를 아예 꺼둡니다(RAM 12GB 이상 PC). " +
-                "그래서 레이드가 길어지고 봇이 많을수록 메모리가 계속 늘어납니다. " +
-                "이 기능은 메모리가 일정량 늘 때마다 GC를 잠깐 켜서, 여러 프레임에 조금씩 나눠 치웁니다.",
-                null, 10);
-
-            _gcGrowthGb = Bind(GcSection, GcCategory, "Growth trigger (GB)", "정리 시작 기준: 증가량 (GB)", 1.5f,
-                "마지막 정리(또는 레이드 시작) 이후 관리 메모리가 이만큼 늘면 정리를 시작합니다. " +
-                "낮을수록 자주·짧게, 높을수록 드물게·길게 정리합니다.",
-                new AcceptableValueRange<float>(0.25f, 16f), 9);
-
-            _gcSliceMs = Bind(GcSection, GcCategory, "Work per frame (ms)", "프레임당 작업 시간 (ms)", 2f,
-                "한 프레임에 GC 작업을 최대 몇 ms까지 할지 정합니다. 낮을수록 끊김이 적은 대신 정리가 오래 걸립니다. " +
-                "참고: 60fps는 한 프레임이 약 16ms, 144fps는 약 7ms입니다.",
-                new AcceptableValueRange<float>(0.5f, 10f), 8);
-
-            _gcCooldownSec = Bind(GcSection, GcCategory, "Minimum gap (s)", "자동 정리 최소 간격 (초)", 60,
-                "정리가 끝난 뒤 다음 자동 정리까지 최소 몇 초를 기다릴지 정합니다.",
-                new AcceptableValueRange<int>(10, 1800), 7);
-
-            _gcAllowBlocking = Bind(GcSection, GcCategory, "Allow blocking fallback", "증분 GC 미지원 시 전체 GC 허용", false,
-                "게임이 '나눠서 하는 GC(증분 GC)'를 지원하지 않을 때만 의미가 있습니다. " +
-                "켜면 그 경우 한 번에 전체 GC를 해서, 메모리 양에 따라 1초 이상 멈출 수 있습니다. " +
-                "BepInEx 로그의 'incremental GC supported=True'면 신경 쓰지 않아도 됩니다.",
-                null, 6);
-        }
-
-        private void BindTrimSettings()
-        {
-            _trimEnabled = Bind(TrimSection, TrimCategory, "Enabled", "워킹셋 정리 켜기", true,
-                "게임이 쓰던 메모리를 RAM 밖(대기 메모리/페이지 파일)으로 강제로 내보냅니다. " +
-                "메모리를 실제로 비우는 게 아니라 옮기는 것이라, 게임이 다시 쓸 때 읽어오느라 직후에 끊김이 생깁니다 " +
-                "(원본 모드에서 끊김이 많았던 이유). 그래서 기본값은 'RAM이 부족할 때만'입니다.",
-                null, 10);
-
-            _trimOnlyLowRam = Bind(TrimSection, TrimCategory, "Only when RAM is low", "시스템 RAM 부족할 때만", true,
-                "켜면 윈도우 전체의 여유 RAM이 아래 기준보다 적을 때만 정리합니다 (추천). " +
-                "끄면 원본 모드처럼 정해진 간격마다 무조건 정리합니다.",
-                null, 9);
-
-            _trimLowRamPercent = Bind(TrimSection, TrimCategory, "Low RAM threshold (%)", "여유 RAM 기준 (%)", 10,
-                "시스템 여유 RAM이 전체의 몇 % 미만이면 '부족'으로 볼지 정합니다. 64GB에서 10%는 약 6.4GB입니다.",
-                new AcceptableValueRange<int>(3, 50), 8);
-
-            _trimIntervalSec = Bind(TrimSection, TrimCategory, "Interval (s)", "간격 (초)", 300,
-                "'RAM 부족할 때만'을 끄면 이 간격마다 정리합니다. 켜져 있으면 두 번 정리 사이의 최소 간격입니다.",
-                new AcceptableValueRange<int>(30, 1800), 7);
-
-            _trimAfterGc = Bind(TrimSection, TrimCategory, "After GC", "GC 정리 직후에도 실행", false,
-                "자동/수동 GC 정리가 끝날 때마다 워킹셋 정리도 같이 합니다. 작업 관리자 숫자는 크게 줄지만 직후 끊김이 생길 수 있습니다.",
-                null, 6);
-        }
-
-        private void BindGeneralSettings()
-        {
-            _onlyInRaid = Bind(GeneralSection, GeneralCategory, "Only in raid", "레이드 중에만 자동 실행", true,
-                "켜면 은신처·메뉴에서는 자동 정리를 하지 않습니다. 아래 수동 버튼은 언제나 동작합니다.",
-                null, 10);
-
-            Bind(GeneralSection, GeneralCategory, "Manual actions", "수동 실행", string.Empty,
-                "지금 GC 정리: 위 설정대로 나눠서 정리합니다. 워킹셋 정리: 직후 잠깐 끊길 수 있습니다. " +
-                "에셋 정리: 안 쓰는 텍스처·모델을 내립니다(게임 콘솔 UnloadUnusedResources와 같은 기능, 1~3초 멈출 수 있음).",
-                null, 9, ManualButtonsDrawer);
-
-            Bind(GeneralSection, GeneralCategory, "Status", "현재 상태", string.Empty,
-                "1초마다 갱신되는 메모리 상태입니다.",
-                null, 8, StatusDrawer);
-
-            _showOverlay = Bind(GeneralSection, GeneralCategory, "Show overlay", "화면에 메모리 표시", false,
-                "화면 왼쪽 위에 메모리 사용량을 한 줄로 띄웁니다. 누수 확인이나 설정 조절할 때 켜 두면 편합니다.",
-                null, 7);
-
-            _logIntervalSec = Bind(GeneralSection, GeneralCategory, "Log interval (s)", "로그 기록 간격 (초, 0=끔)", 60,
-                "레이드 중 이 간격마다 BepInEx 로그(LogOutput.log)에 메모리 상태를 한 줄씩 남깁니다. 문제 제보할 때 이 로그가 있으면 원인 찾기가 쉽습니다.",
-                new AcceptableValueRange<int>(0, 600), 6);
-        }
-
-        private ConfigEntry<T> Bind<T>(string section, string category, string key, string displayName, T defaultValue,
-            string description, AcceptableValueBase range, int order, Action<ConfigEntryBase> drawer = null)
-        {
-            var attributes = new ConfigurationManagerAttributes
-            {
-                Category = category,
-                DispName = displayName,
-                Order = order,
-            };
-
-            if (drawer != null)
-            {
-                attributes.CustomDrawer = drawer;
-                attributes.HideDefaultButton = true;
-            }
-
-            return Config.Bind(section, key, defaultValue, new ConfigDescription(description, range, attributes));
+            _combat.Unbind();
+            _vram.Dispose();
         }
 
         internal void Update()
         {
             float now = Time.realtimeSinceStartup;
+
+            while (_mainThread.TryDequeue(out Action action))
+            {
+                action();
+            }
 
             if (_gc.Running)
             {
@@ -191,11 +124,14 @@ namespace CactusPie.RamCleanerInterval
                 }
             }
 
-            if (now < _nextSample)
+            TickAssetUnload(now);
+
+            if (now < _nextSample && !_evaluateNow)
             {
                 return;
             }
 
+            _evaluateNow = false;
             _nextSample = now + 1f;
 
             bool inGame = GameHelper.IsInGame();
@@ -205,42 +141,107 @@ namespace CactusPie.RamCleanerInterval
                 OnRaidStateChanged(now);
             }
 
+            _combat.Poll();
             _snapshot = MemoryStats.Sample();
             bool autoActive = _inGame || !_onlyInRaid.Value;
+
+            if (_inGame)
+            {
+                EvaluateRaidStart(now);
+            }
 
             if (autoActive)
             {
                 EvaluateGc(now);
+                EvaluateAssets(now);
                 EvaluateTrim(now);
                 EvaluateLog(now);
             }
 
-            BuildTexts();
+            BuildTexts(now);
         }
 
         private void OnRaidStateChanged(float now)
         {
             _gcBaseline = -1;
+            _gcPendingSince = -1f;
             _lastTrim = now;
+            _trimPendingSince = -1f;
             _nextLog = now;
+            _raidStartedAt = -1f;
+            _inGameSince = now;
+            _startUnloadDone = false;
+            _nativeBaseline = -1;
+            _unloadPendingSince = -1f;
+            _weakUnloads = 0;
+            _autoUnloadStopped = false;
 
             if (_inGame)
             {
                 _warnedNoIncremental = false;
-                Logger.LogInfo($"Raid started: GC mode {GarbageCollector.GCMode}, incremental={GarbageCollector.isIncremental}, " +
+                Logger.LogInfo($"Raid loading: GC mode {GarbageCollector.GCMode}, incremental={GarbageCollector.isIncremental}, " +
                                $"mono used {MemoryStats.Gb(MemoryStats.MonoUsed())} GB");
             }
             else
             {
+                if (_assetPhase == AssetPhase.WaitingForGc)
+                {
+                    // Raid is being torn down; the game unloads assets itself on the way to the menu.
+                    _assetPhase = AssetPhase.Idle;
+                    _lastAssetResult = $"{DateTime.Now:HH:mm:ss} 레이드가 끝나서 취소";
+                }
+
                 _gc.Abort(false, "레이드가 끝나서 중단");
+                _combat.Unbind();
                 Logger.LogInfo("Left raid");
             }
         }
+
+        /// <summary>
+        /// "Raid started" = the countdown is over (AbstractGame.Status == Started). That is the moment
+        /// SPTVRAMCleaner used (PreloaderUI.ShowRaidStartInfo); polling the status needs no Harmony patch.
+        /// </summary>
+        private void EvaluateRaidStart(float now)
+        {
+            if (_raidStartedAt >= 0f)
+            {
+                return;
+            }
+
+            AbstractGame game = Singleton<AbstractGame>.Instance;
+            bool started = game != null && game.Status == GameStatus.Started;
+            if (!started && now - _inGameSince < RaidStartFallbackSeconds)
+            {
+                return;
+            }
+
+            _raidStartedAt = now;
+            _nativeBaseline = _snapshot.Native;
+            Logger.LogInfo($"Raid started{(started ? string.Empty : " (status timeout)")}: {DescribeForLog(_snapshot)}");
+        }
+
+        private bool IsQuietNow(float pendingSince, float maxDefer, float now)
+        {
+            if (!_waitForQuiet.Value)
+            {
+                return true;
+            }
+
+            if (_combat.IsQuiet(_quietSec.Value))
+            {
+                return true;
+            }
+
+            return maxDefer > 0f && now - pendingSince >= maxDefer;
+        }
+
+        // ---------------------------------------------------------------- GC
 
         private void EvaluateGc(float now)
         {
             if (!_gcEnabled.Value || _gc.Running)
             {
+                _gcPendingSince = -1f;
                 return;
             }
 
@@ -253,17 +254,26 @@ namespace CactusPie.RamCleanerInterval
             }
 
             long growth = used - _gcBaseline;
-            if (growth < (long)(_gcGrowthGb.Value * MemoryStats.BytesPerGb))
+            if (growth < (long)(_gcGrowthGb.Value * MemoryStats.BytesPerGb) ||
+                (_gc.LastFinishTime >= 0 && now - _gc.LastFinishTime < _gcCooldownSec.Value))
+            {
+                _gcPendingSince = -1f;
+                return;
+            }
+
+            if (_gcPendingSince < 0f)
+            {
+                _gcPendingSince = now;
+            }
+
+            if (!IsQuietNow(_gcPendingSince, _gcMaxDeferSec.Value, now))
             {
                 return;
             }
 
-            if (_gc.LastFinishTime >= 0 && now - _gc.LastFinishTime < _gcCooldownSec.Value)
-            {
-                return;
-            }
-
-            if (_gc.Start($"auto, +{MemoryStats.Gb(growth)} GB", _gcAllowBlocking.Value, true))
+            string waited = now - _gcPendingSince >= 1f ? $", waited {now - _gcPendingSince:0}s" : string.Empty;
+            _gcPendingSince = -1f;
+            if (_gc.Start($"auto, +{MemoryStats.Gb(growth)} GB{waited}{QuietTag()}", _gcAllowBlocking.Value, true))
             {
                 return;
             }
@@ -282,65 +292,271 @@ namespace CactusPie.RamCleanerInterval
         private void OnGcFinished()
         {
             _gcBaseline = _gc.LastUsedAfter;
+
+            if (_assetPhase == AssetPhase.WaitingForGc)
+            {
+                BeginUnload();
+            }
+
             if (_trimAfterGc.Value)
             {
-                Trim("after GC");
+                StartTrim("after GC");
             }
         }
+
+        private string QuietTag()
+        {
+            if (!_waitForQuiet.Value)
+            {
+                return string.Empty;
+            }
+
+            return _combat.InventoryOpen ? ", inventory open" : $", quiet {Mathf.Min(_combat.SecondsSinceCombat, 999f):0}s";
+        }
+
+        // ---------------------------------------------------------------- Asset unload
+
+        private void EvaluateAssets(float now)
+        {
+            if (_assetPhase != AssetPhase.Idle)
+            {
+                return;
+            }
+
+            if (_inGame && _unloadAtStart.Value && !_startUnloadDone && _raidStartedAt >= 0f &&
+                now - _raidStartedAt >= _unloadStartDelaySec.Value)
+            {
+                _startUnloadDone = true;
+                // The game ran a full GC while loading, so no GC pass is needed first here.
+                StartAssetUnload("raid start", false, false);
+                return;
+            }
+
+            long native = _snapshot.Native;
+            if (!_inGame || !_unloadAuto.Value || _autoUnloadStopped || _raidStartedAt < 0f || native < 0)
+            {
+                _unloadPendingSince = -1f;
+                return;
+            }
+
+            if (_nativeBaseline < 0 || native < _nativeBaseline)
+            {
+                _nativeBaseline = native;
+                return;
+            }
+
+            long growth = native - _nativeBaseline;
+            if (growth < (long)(_unloadNativeGrowthGb.Value * MemoryStats.BytesPerGb) ||
+                now - _lastUnload < _unloadCooldownMin.Value * 60f)
+            {
+                _unloadPendingSince = -1f;
+                return;
+            }
+
+            if (_unloadPendingSince < 0f)
+            {
+                _unloadPendingSince = now;
+            }
+
+            // Asset unload can hitch for seconds, so unlike GC it has no "max wait": quiet moment only.
+            if (!IsQuietNow(_unloadPendingSince, 0f, now))
+            {
+                return;
+            }
+
+            string waited = now - _unloadPendingSince >= 1f ? $", waited {now - _unloadPendingSince:0}s" : string.Empty;
+            _unloadPendingSince = -1f;
+            StartAssetUnload($"auto, native +{MemoryStats.Gb(growth)} GB{waited}{QuietTag()}", _unloadGcFirst.Value, true);
+        }
+
+        private void StartAssetUnload(string reason, bool gcFirst, bool isAuto)
+        {
+            if (_assetPhase != AssetPhase.Idle)
+            {
+                return;
+            }
+
+            _assetReason = reason;
+            _assetAuto = isAuto;
+            _assetBefore = MemoryStats.Sample();
+            _assetVramBefore = _vram.Dedicated;
+            _assetStart = Time.realtimeSinceStartup;
+            _assetLongestFrame = 0f;
+
+            if (gcFirst && (_gc.Running || _gc.Start($"before asset unload ({reason})", false, false)))
+            {
+                _assetPhase = AssetPhase.WaitingForGc;
+                _lastAssetResult = $"{DateTime.Now:HH:mm:ss} GC 먼저 진행 중...";
+                return;
+            }
+
+            BeginUnload();
+        }
+
+        private void BeginUnload()
+        {
+            _assetPhase = AssetPhase.Unloading;
+            _lastAssetResult = $"{DateTime.Now:HH:mm:ss} 에셋 내리는 중...";
+            Logger.LogInfo($"UnloadUnusedAssets start ({_assetReason})");
+            _assetOperation = Resources.UnloadUnusedAssets();
+        }
+
+        private void TickAssetUnload(float now)
+        {
+            if (_assetPhase == AssetPhase.Idle || _assetPhase == AssetPhase.WaitingForGc)
+            {
+                return;
+            }
+
+            // Longest frame while the unload runs = the hitch the player actually felt.
+            _assetLongestFrame = Mathf.Max(_assetLongestFrame, Time.unscaledDeltaTime);
+
+            if (_assetPhase == AssetPhase.Unloading)
+            {
+                if (_assetOperation != null && !_assetOperation.isDone)
+                {
+                    return;
+                }
+
+                _assetOperation = null;
+                _assetPhase = AssetPhase.Measuring;
+                _assetDone = now;
+                return;
+            }
+
+            // Measuring: the VRAM counter refreshes every 5 s, so wait a moment before reading "after".
+            if (now - _assetDone < UnloadMeasureDelaySeconds)
+            {
+                return;
+            }
+
+            FinishAssetUnload(now);
+        }
+
+        private void FinishAssetUnload(float now)
+        {
+            _assetPhase = AssetPhase.Idle;
+            _lastUnload = now;
+
+            MemorySnapshot after = MemoryStats.Sample();
+            long vramAfter = _vram.Dedicated;
+            long nativeFreed = _assetBefore.Native >= 0 && after.Native >= 0 ? _assetBefore.Native - after.Native : 0;
+            long vramFreed = _assetVramBefore >= 0 && vramAfter >= 0 ? _assetVramBefore - vramAfter : 0;
+            float unloadSeconds = _assetDone - _assetStart;
+
+            if (after.Native >= 0)
+            {
+                _nativeBaseline = after.Native;
+            }
+
+            string vramText = vramAfter >= 0 ? $", VRAM {MemoryStats.Gb(_assetVramBefore)} → {MemoryStats.Gb(vramAfter)} GB" : string.Empty;
+            _lastAssetResult = $"{DateTime.Now:HH:mm:ss} ({(_assetAuto ? "자동" : _assetReason == "raid start" ? "레이드 시작" : "수동")}) " +
+                               $"네이티브 {MemoryStats.Gb(_assetBefore.Native)} → {MemoryStats.Gb(after.Native)} GB{vramText}, " +
+                               $"가장 긴 프레임 {_assetLongestFrame * 1000f:0}ms";
+
+            Logger.LogInfo($"UnloadUnusedAssets done ({_assetReason}) in {unloadSeconds:0.0}s: native {MemoryStats.Gb(_assetBefore.Native)} -> " +
+                           $"{MemoryStats.Gb(after.Native)} GB (freed {MemoryStats.Gb(nativeFreed)}), VRAM {MemoryStats.Gb(_assetVramBefore)} -> " +
+                           $"{MemoryStats.Gb(vramAfter)} GB (freed {MemoryStats.Gb(vramFreed)}), working set {MemoryStats.Gb(_assetBefore.WorkingSet)} -> " +
+                           $"{MemoryStats.Gb(after.WorkingSet)} GB, longest frame {_assetLongestFrame * 1000f:0}ms");
+
+            if (!_assetAuto)
+            {
+                return;
+            }
+
+            // Adaptive stop: if unloading assets gives almost nothing back, the native growth is a leak
+            // in some mod's native/Unity objects that are still referenced - hitching for it is pointless.
+            if (nativeFreed < (long)(WeakUnloadGb * MemoryStats.BytesPerGb))
+            {
+                _weakUnloads++;
+                if (_weakUnloads >= 2)
+                {
+                    _autoUnloadStopped = true;
+                    Logger.LogWarning("Auto asset unload stopped for this raid: two unloads in a row freed < 0.5 GB. " +
+                                      "The native growth is not unused assets (likely something still referenced by a mod).");
+                }
+            }
+            else
+            {
+                _weakUnloads = 0;
+            }
+        }
+
+        // ---------------------------------------------------------------- Working set trim
 
         private void EvaluateTrim(float now)
         {
             if (!_trimEnabled.Value || now - _lastTrim < _trimIntervalSec.Value)
             {
+                _trimPendingSince = -1f;
                 return;
             }
 
+            string reason;
             if (!_trimOnlyLowRam.Value)
             {
-                Trim("interval");
+                reason = "interval";
+            }
+            else if (_snapshot.SystemTotal > 0 && _snapshot.SystemAvailablePercent < _trimLowRamPercent.Value)
+            {
+                reason = $"low RAM {_snapshot.SystemAvailablePercent:0}%";
+            }
+            else
+            {
+                _trimPendingSince = -1f;
                 return;
             }
 
-            if (_snapshot.SystemTotal > 0 && _snapshot.SystemAvailablePercent < _trimLowRamPercent.Value)
+            if (_trimPendingSince < 0f)
             {
-                Trim($"low RAM {_snapshot.SystemAvailablePercent:0}%");
+                _trimPendingSince = now;
+                _trimPendingReason = reason;
             }
-        }
 
-        private void Trim(string reason)
-        {
-            _lastTrim = Time.realtimeSinceStartup;
-            MemorySnapshot before = MemoryStats.Sample();
-            var watch = Stopwatch.StartNew();
-            bool ok = MemoryStats.EmptyWorkingSet();
-            watch.Stop();
-            MemorySnapshot after = MemoryStats.Sample();
-
-            _lastTrimResult = ok
-                ? $"{DateTime.Now:HH:mm:ss} 워킹셋 {MemoryStats.Gb(before.WorkingSet)} → {MemoryStats.Gb(after.WorkingSet)} GB ({reason})"
-                : $"{DateTime.Now:HH:mm:ss} 실패 (윈도우 API 호출 불가)";
-            Logger.LogInfo($"Working set trim ({reason}): ok={ok}, {MemoryStats.Gb(before.WorkingSet)} -> " +
-                           $"{MemoryStats.Gb(after.WorkingSet)} GB, call {watch.Elapsed.TotalMilliseconds:0}ms");
-        }
-
-        private void UnloadAssets()
-        {
-            var watch = Stopwatch.StartNew();
-            long before = _snapshot.WorkingSet;
-            AsyncOperation operation = Resources.UnloadUnusedAssets();
-            _lastAssetResult = $"{DateTime.Now:HH:mm:ss} 진행 중...";
-            Logger.LogInfo("UnloadUnusedAssets started");
-
-            operation.completed += _ =>
+            if (!IsQuietNow(_trimPendingSince, TrimMaxDeferSeconds, now))
             {
-                watch.Stop();
-                MemorySnapshot after = MemoryStats.Sample();
-                _lastAssetResult = $"{DateTime.Now:HH:mm:ss} 완료 — 워킹셋 {MemoryStats.Gb(before)} → {MemoryStats.Gb(after.WorkingSet)} GB, " +
-                                   $"{watch.Elapsed.TotalSeconds:0.0}초";
-                Logger.LogInfo($"UnloadUnusedAssets done in {watch.Elapsed.TotalMilliseconds:0}ms, working set " +
-                               $"{MemoryStats.Gb(before)} -> {MemoryStats.Gb(after.WorkingSet)} GB");
-            };
+                return;
+            }
+
+            _trimPendingSince = -1f;
+            StartTrim(_trimPendingReason + QuietTag());
         }
+
+        /// <summary>
+        /// EmptyWorkingSet on a 40 GB working set took 3.5 s in a real log (2026-09-29) and froze the game
+        /// for all of it because v2.0.0 called it from Update. The call does not need the main thread.
+        /// </summary>
+        private void StartTrim(string reason)
+        {
+            if (Interlocked.CompareExchange(ref _trimRunning, 1, 0) != 0)
+            {
+                return;
+            }
+
+            _lastTrim = Time.realtimeSinceStartup;
+            _lastTrimResult = $"{DateTime.Now:HH:mm:ss} 진행 중... ({reason})";
+
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                long before = MemoryStats.ReadWorkingSet();
+                var watch = Stopwatch.StartNew();
+                bool ok = MemoryStats.EmptyWorkingSet();
+                watch.Stop();
+                long after = MemoryStats.ReadWorkingSet();
+
+                _mainThread.Enqueue(() =>
+                {
+                    Interlocked.Exchange(ref _trimRunning, 0);
+                    _lastTrimResult = ok
+                        ? $"{DateTime.Now:HH:mm:ss} 워킹셋 {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB ({reason})"
+                        : $"{DateTime.Now:HH:mm:ss} 실패 (윈도우 API 호출 불가)";
+                    Logger.LogInfo($"Working set trim ({reason}): ok={ok}, {MemoryStats.Gb(before)} -> {MemoryStats.Gb(after)} GB, " +
+                                   $"background call {watch.Elapsed.TotalMilliseconds:0}ms");
+                });
+            });
+        }
+
+        // ---------------------------------------------------------------- Log / status / UI
 
         private void EvaluateLog(float now)
         {
@@ -351,11 +567,16 @@ namespace CactusPie.RamCleanerInterval
             }
 
             _nextLog = now + interval;
-            MemorySnapshot s = _snapshot;
-            Logger.LogInfo($"[mem] mono used {MemoryStats.Gb(s.MonoUsed)} / reserved {MemoryStats.Gb(s.MonoReserved)} GB | " +
-                           $"working set {MemoryStats.Gb(s.WorkingSet)} GB | private {MemoryStats.Gb(s.PrivateBytes)} GB | " +
-                           $"system free {MemoryStats.Gb(s.SystemAvailable)}/{MemoryStats.Gb(s.SystemTotal)} GB | " +
-                           $"GC {s.GcMode}{(_gc.Running ? " (collecting)" : string.Empty)}");
+            Logger.LogInfo($"[mem] {DescribeForLog(_snapshot)} | GC {_snapshot.GcMode}{(_gc.Running ? " (collecting)" : string.Empty)} | " +
+                           $"combat {(_combat.InventoryOpen ? "inventory" : Mathf.Min(_combat.SecondsSinceCombat, 9999f).ToString("0") + "s ago")}");
+        }
+
+        private string DescribeForLog(MemorySnapshot s)
+        {
+            return $"mono used {MemoryStats.Gb(s.MonoUsed)} / reserved {MemoryStats.Gb(s.MonoReserved)} GB | " +
+                   $"native {MemoryStats.Gb(s.Native)} GB | working set {MemoryStats.Gb(s.WorkingSet)} GB | private {MemoryStats.Gb(s.PrivateBytes)} GB | " +
+                   $"VRAM {MemoryStats.Gb(_vram.Dedicated)} GB (+shared {MemoryStats.Gb(_vram.Shared)}) | " +
+                   $"system free {MemoryStats.Gb(s.SystemAvailable)}/{MemoryStats.Gb(s.SystemTotal)} GB";
         }
 
         private void OnGcModeChanged(GarbageCollector.Mode mode)
@@ -366,16 +587,24 @@ namespace CactusPie.RamCleanerInterval
             }
         }
 
-        private void BuildTexts()
+        private void BuildTexts(float now)
         {
             MemorySnapshot s = _snapshot;
             string gcState = _gc.Running ? $"정리 중 {_gc.Elapsed:0}초" : MemoryStats.ModeName(s.GcMode);
+            long vram = _vram.Dedicated;
 
-            var sb = new StringBuilder(512);
+            var sb = new StringBuilder(768);
             sb.Append("관리 메모리(Mono 힙): 사용 ").Append(MemoryStats.Gb(s.MonoUsed))
               .Append(" GB / 확보 ").Append(MemoryStats.Gb(s.MonoReserved)).Append(" GB\n");
             if (s.SystemTotal > 0)
             {
+                sb.Append("네이티브 메모리(에셋·엔진·모드): ").Append(MemoryStats.Gb(s.Native)).Append(" GB");
+                if (_nativeBaseline >= 0 && _inGame)
+                {
+                    sb.Append(" (마지막 기준점 대비 +").Append(MemoryStats.Gb(Math.Max(0, s.Native - _nativeBaseline))).Append(" GB)");
+                }
+
+                sb.Append('\n');
                 sb.Append("게임 전체: 실제 RAM(워킹셋) ").Append(MemoryStats.Gb(s.WorkingSet))
                   .Append(" GB / 커밋 ").Append(MemoryStats.Gb(s.PrivateBytes)).Append(" GB\n");
                 sb.Append("시스템 여유 RAM: ").Append(MemoryStats.Gb(s.SystemAvailable)).Append(" / ")
@@ -383,12 +612,50 @@ namespace CactusPie.RamCleanerInterval
                   .Append("%)\n");
             }
 
+            sb.Append("VRAM(이 게임): ");
+            if (vram >= 0)
+            {
+                sb.Append("전용 ").Append(MemoryStats.Gb(vram)).Append(" GB / 공유 ").Append(MemoryStats.Gb(_vram.Shared))
+                  .Append(" GB (그래픽카드 ").Append((SystemInfo.graphicsMemorySize / 1024f).ToString("0.0")).Append(" GB)\n");
+            }
+            else
+            {
+                sb.Append(_vram.Failed ? "측정 불가 (윈도우 성능 카운터 없음)\n" : "측정 중...\n");
+            }
+
             sb.Append("GC 상태: ").Append(gcState)
               .Append(" · 나눠서 하는 GC(증분): ").Append(GarbageCollector.isIncremental ? "지원" : "미지원").Append('\n');
+
+            if (_inGame)
+            {
+                sb.Append("전투 상태: ");
+                if (_combat.InventoryOpen)
+                {
+                    sb.Append("인벤토리 열림 (정리하기 좋은 순간)");
+                }
+                else if (_combat.IsQuiet(_quietSec.Value))
+                {
+                    sb.Append("조용함");
+                }
+                else
+                {
+                    sb.Append("전투 중 (마지막 활동 ").Append(_combat.SecondsSinceCombat.ToString("0")).Append("초 전)");
+                }
+
+                sb.Append('\n');
+            }
+
+            AppendPending(sb, now);
+
             if (_gcBaseline >= 0 && !_gc.Running)
             {
-                sb.Append("다음 자동 정리: 사용량 ")
+                sb.Append("다음 자동 GC: 사용량 ")
                   .Append(MemoryStats.Gb(_gcBaseline + (long)(_gcGrowthGb.Value * MemoryStats.BytesPerGb))).Append(" GB 도달 시\n");
+            }
+
+            if (_autoUnloadStopped)
+            {
+                sb.Append("레이드 중 자동 에셋 정리: 이번 레이드에서는 중단됨 (정리해도 거의 안 줄어서 — 모드 누수 의심)\n");
             }
 
             sb.Append("마지막 GC 정리: ").Append(_gc.LastResult).Append('\n');
@@ -398,14 +665,33 @@ namespace CactusPie.RamCleanerInterval
 
             if (_showOverlay.Value)
             {
-                _overlayText = $"RAM 클리너 | 힙 {MemoryStats.Gb(s.MonoUsed)}GB · 워킹셋 {MemoryStats.Gb(s.WorkingSet)}GB · " +
-                               $"여유 {MemoryStats.Gb(s.SystemAvailable)}GB · GC {gcState}";
+                string vramText = vram >= 0 ? MemoryStats.Gb(vram) + "GB" : "?";
+                _overlayText = $"RAM 클리너 | 힙 {MemoryStats.Gb(s.MonoUsed)}GB · 네이티브 {MemoryStats.Gb(s.Native)}GB · " +
+                               $"VRAM {vramText} · 여유 {MemoryStats.Gb(s.SystemAvailable)}GB · GC {gcState}";
+            }
+        }
+
+        private void AppendPending(StringBuilder sb, float now)
+        {
+            if (_gcPendingSince >= 0f)
+            {
+                sb.Append("대기 중: GC (전투가 끝나길 기다리는 중, ").Append((now - _gcPendingSince).ToString("0")).Append("초)\n");
+            }
+
+            if (_unloadPendingSince >= 0f)
+            {
+                sb.Append("대기 중: 에셋 정리 (조용한 순간 또는 인벤토리 열 때, ").Append((now - _unloadPendingSince).ToString("0")).Append("초)\n");
+            }
+
+            if (_trimPendingSince >= 0f)
+            {
+                sb.Append("대기 중: 워킹셋 정리 (").Append((now - _trimPendingSince).ToString("0")).Append("초)\n");
             }
         }
 
         private void ManualButtonsDrawer(ConfigEntryBase entry)
         {
-            if (GUILayout.Button(_gc.Running ? "GC 정리 중..." : "지금 GC 정리", GUILayout.ExpandWidth(true)) && !_gc.Running)
+            if (GUILayout.Button(_gc.Running ? "GC 정리 중..." : "GC 정리", GUILayout.ExpandWidth(true)) && !_gc.Running)
             {
                 if (!_gc.Start("manual", true, false))
                 {
@@ -413,14 +699,14 @@ namespace CactusPie.RamCleanerInterval
                 }
             }
 
-            if (GUILayout.Button("워킹셋 정리", GUILayout.ExpandWidth(true)))
+            if (GUILayout.Button(_trimRunning != 0 ? "워킹셋 정리 중..." : "워킹셋 정리", GUILayout.ExpandWidth(true)))
             {
-                Trim("manual");
+                StartTrim("manual");
             }
 
-            if (GUILayout.Button("에셋 정리", GUILayout.ExpandWidth(true)))
+            if (GUILayout.Button(_assetPhase != AssetPhase.Idle ? "에셋 정리 중..." : "에셋 정리", GUILayout.ExpandWidth(true)))
             {
-                UnloadAssets();
+                StartAssetUnload("manual", _unloadGcFirst.Value, false);
             }
         }
 

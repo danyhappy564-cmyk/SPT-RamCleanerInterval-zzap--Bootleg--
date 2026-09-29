@@ -30,6 +30,8 @@ namespace CactusPie.RamCleanerInterval
         private int _frames;
         private double _workMs;
         private double _maxSliceMs;
+        private int _maxSliceFrame;
+        private int _longSlices;
         private string _reason;
 
         public GcRunner(ManualLogSource log)
@@ -85,6 +87,8 @@ namespace CactusPie.RamCleanerInterval
             _frames = 0;
             _workMs = 0;
             _maxSliceMs = 0;
+            _maxSliceFrame = 0;
+            _longSlices = 0;
             _changedMode = false;
             _previousMode = GarbageCollector.GCMode;
 
@@ -143,6 +147,12 @@ namespace CactusPie.RamCleanerInterval
             if (ms > _maxSliceMs)
             {
                 _maxSliceMs = ms;
+                _maxSliceFrame = _frames;
+            }
+
+            if (ms > 16.7)
+            {
+                _longSlices++;
             }
 
             if (!moreWork)
@@ -176,11 +186,12 @@ namespace CactusPie.RamCleanerInterval
 
             string status = abortReason == null ? "완료" : abortReason;
             LastResult = $"{DateTime.Now:HH:mm:ss} {status} — {MemoryStats.Gb(_usedBefore)} → {MemoryStats.Gb(usedAfter)} GB, " +
-                         $"{seconds:0.0}초 동안 {_frames}프레임에 나눠 처리 (프레임당 최대 {_maxSliceMs:0.0}ms)";
+                         $"{seconds:0.0}초 동안 {_frames}프레임에 나눠 처리 (가장 긴 프레임 {_maxSliceMs:0}ms, 16ms 넘은 프레임 {_longSlices}개)";
 
             _log.LogInfo($"GC {(abortReason == null ? "done" : "aborted")} ({_reason}): {MemoryStats.Gb(_usedBefore)} -> " +
                          $"{MemoryStats.Gb(usedAfter)} GB in {seconds:0.0}s, {_frames} frames, work {_workMs:0}ms, " +
-                         $"max slice {_maxSliceMs:0.00}ms, mode now {GarbageCollector.GCMode}");
+                         $"max slice {_maxSliceMs:0.00}ms at frame {_maxSliceFrame}/{_frames}, slices over 16.7ms: {_longSlices}, " +
+                         $"mode now {GarbageCollector.GCMode}");
 
             Finished?.Invoke();
         }

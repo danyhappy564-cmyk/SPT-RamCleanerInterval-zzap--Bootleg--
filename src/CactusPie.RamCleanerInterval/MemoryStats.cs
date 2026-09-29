@@ -19,6 +19,10 @@ namespace CactusPie.RamCleanerInterval
         public long SystemAvailable;
         public GarbageCollector.Mode GcMode;
 
+        /// <summary>Everything the process committed that is not the Mono heap: Unity objects, textures,
+        /// meshes, audio, physics, native plugin memory. This is where "the game keeps growing" usually is.</summary>
+        public long Native => PrivateBytes > 0 ? Math.Max(0, PrivateBytes - MonoReserved) : -1;
+
         public float SystemAvailablePercent =>
             SystemTotal > 0 ? SystemAvailable * 100f / SystemTotal : 100f;
     }
@@ -147,6 +151,25 @@ namespace CactusPie.RamCleanerInterval
             }
 
             return snapshot;
+        }
+
+        /// <summary>Working set in bytes (-1 if unknown). Win32 only, safe to call from any thread.</summary>
+        public static long ReadWorkingSet()
+        {
+            try
+            {
+                var counters = new ProcessMemoryCountersEx
+                {
+                    cb = (uint)Marshal.SizeOf(typeof(ProcessMemoryCountersEx)),
+                };
+                return GetProcessMemoryInfo(GetCurrentProcess(), ref counters, counters.cb)
+                    ? (long)counters.WorkingSetSize.ToUInt64()
+                    : -1;
+            }
+            catch (Exception)
+            {
+                return -1;
+            }
         }
 
         /// <summary>
