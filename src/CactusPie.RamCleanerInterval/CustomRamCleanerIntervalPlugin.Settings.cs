@@ -13,12 +13,18 @@ namespace CactusPie.RamCleanerInterval
         private const string GeneralSection = "3. General";
         private const string AssetSection = "4. Assets";
         private const string TimingSection = "5. Timing";
+        private const string LeakSection = "6. Leak tracker";
+        private const string InternalSection = "Internal";
+
+        // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
+        private const int CurrentConfigVersion = 220;
 
         private const string GcCategory = "1. 자동 메모리 정리 (GC) — 추천";
         private const string TrimCategory = "2. 워킹셋 정리 (원본 RAM 클리너 방식)";
         private const string AssetCategory = "3. 에셋·VRAM 정리 (SPTVRAMCleaner 개선판)";
         private const string TimingCategory = "4. 전투 중에는 미루기";
         private const string GeneralCategory = "5. 공통 · 수동 실행 · 상태";
+        private const string LeakCategory = "6. 누수 추적 (진단용)";
 
         private ConfigEntry<bool> _gcEnabled;
         private ConfigEntry<float> _gcGrowthGb;
@@ -44,6 +50,10 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<int> _gcMaxDeferSec;
         private ConfigEntry<bool> _runOnInventory;
 
+        private ConfigEntry<bool> _leakEnabled;
+        private ConfigEntry<int> _leakIntervalMin;
+        private ConfigEntry<int> _configVersion;
+
         private ConfigEntry<bool> _onlyInRaid;
         private ConfigEntry<bool> _showOverlay;
         private ConfigEntry<int> _logIntervalSec;
@@ -55,6 +65,39 @@ namespace CactusPie.RamCleanerInterval
             BindAssetSettings();
             BindTimingSettings();
             BindGeneralSettings();
+            BindLeakSettings();
+            MigrateSettings();
+        }
+
+        private void MigrateSettings()
+        {
+            _configVersion = Config.Bind(InternalSection, "Config version", 0,
+                new ConfigDescription("Do not edit.", null, new ConfigurationManagerAttributes { Browsable = false }));
+
+            if (_configVersion.Value < 220)
+            {
+                // v2.1.0 real log: the raid-start unload froze the game 5.6 s and freed 0.07 GB of VRAM.
+                if (_unloadAtStart.Value)
+                {
+                    _unloadAtStart.Value = false;
+                    Logger.LogInfo("Settings migrated to 2.2.0: '레이드 시작 시 1회 정리' switched off (new default)");
+                }
+            }
+
+            _configVersion.Value = CurrentConfigVersion;
+        }
+
+        private void BindLeakSettings()
+        {
+            _leakEnabled = Bind(LeakSection, LeakCategory, "Enabled", "누수 추적 켜기", false,
+                "레이드 중 일정 간격으로 게임 안의 모든 오브젝트를 종류별·이름별로 세어서, 레이드 시작 이후 무엇이 계속 늘어나는지 " +
+                "로그([leak] 줄)에 남깁니다. 어떤 모드가 메모리를 새게 하는지 찾을 때만 켜세요. " +
+                "한 번 셀 때 0.1~1초 끊길 수 있어서 조용한 순간에만 실행합니다.",
+                null, 10);
+
+            _leakIntervalMin = Bind(LeakSection, LeakCategory, "Interval (min)", "기록 간격 (분)", 5,
+                "레이드 시작 1분 뒤 기준점을 잡고, 그 뒤로 이 간격마다 기록합니다.",
+                new AcceptableValueRange<int>(1, 30), 9);
         }
 
         private void BindGcSettings()
@@ -115,9 +158,9 @@ namespace CactusPie.RamCleanerInterval
 
         private void BindAssetSettings()
         {
-            _unloadAtStart = Bind(AssetSection, AssetCategory, "At raid start", "레이드 시작 시 1회 정리", true,
-                "카운트다운이 끝나고 레이드가 시작되면, 메뉴·로딩 때 쓰고 남은 텍스처·모델을 한 번 내립니다(보통 VRAM 1~2GB). " +
-                "SPTVRAMCleaner(matsix)의 기능입니다. 시작 직후 잠깐 끊길 수 있습니다.",
+            _unloadAtStart = Bind(AssetSection, AssetCategory, "At raid start", "레이드 시작 시 1회 정리", false,
+                "카운트다운이 끝나고 레이드가 시작되면, 메뉴·로딩 때 쓰고 남은 텍스처·모델을 한 번 내립니다. " +
+                "SPTVRAMCleaner(matsix)의 기능입니다. 실측(2026-09-29): 게임이 5.6초 멈췄고 VRAM은 0.07GB만 줄어서 기본값을 껐습니다.",
                 null, 10);
 
             _unloadStartDelaySec = Bind(AssetSection, AssetCategory, "Start delay (s)", "시작 후 대기 (초)", 3,
@@ -126,8 +169,8 @@ namespace CactusPie.RamCleanerInterval
 
             _unloadAuto = Bind(AssetSection, AssetCategory, "Auto in raid", "레이드 중 자동 정리", true,
                 "GC가 관리하지 않는 '네이티브 메모리'(텍스처·모델·사운드·물리, 모드가 만든 오브젝트 등)가 많이 늘면, " +
-                "조용한 순간에 안 쓰는 에셋을 내립니다. 정리해도 거의 안 줄면(에셋 문제가 아니라 모드 누수) " +
-                "그 레이드에서는 자동으로 그만둡니다.",
+                "조용한 순간에 안 쓰는 에셋을 내립니다. 두 번 연속 거의 안 줄면(에셋 문제가 아니라 모드 누수) " +
+                "게임을 끌 때까지 자동으로 그만둡니다(이 설정을 껐다 켜면 다시 시도).",
                 null, 8);
 
             _unloadNativeGrowthGb = Bind(AssetSection, AssetCategory, "Native growth trigger (GB)", "정리 시작 기준: 네이티브 증가량 (GB)", 8f,

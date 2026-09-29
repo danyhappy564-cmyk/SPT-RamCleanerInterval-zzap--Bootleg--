@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using BepInEx;
@@ -12,13 +13,18 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.1.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.2.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
         private const float RaidStartFallbackSeconds = 120f;
         private const float UnloadMeasureDelaySeconds = 6f;
         private const double WeakUnloadGb = 0.5;
+        private const float LeakFirstSnapshotDelay = 60f;
+        private const float LeakMaxDeferSeconds = 60f;
+
+        // Survives raids (not the game): once auto unload proved useless, don't hitch every raid to re-learn it.
+        private static bool s_autoUnloadUselessThisSession;
 
         private enum AssetPhase
         {
@@ -33,6 +39,9 @@ namespace CactusPie.RamCleanerInterval
         private GcRunner _gc;
         private CombatTracker _combat;
         private VramMonitor _vram;
+        private LeakTracker _leak;
+        private float _leakNext = -1f;
+        private float _leakPendingSince = -1f;
 
         private MemorySnapshot _snapshot;
         private float _nextSample;
@@ -85,8 +94,10 @@ namespace CactusPie.RamCleanerInterval
             _combat = new CombatTracker();
             _combat.InventoryOpened += () => _evaluateNow = true;
             _vram = new VramMonitor();
+            _leak = new LeakTracker(Logger);
 
             BindSettings();
+            _unloadAuto.SettingChanged += (_, __) => s_autoUnloadUselessThisSession = false;
 
             GarbageCollector.GCModeChanged += OnGcModeChanged;
 
@@ -155,6 +166,7 @@ namespace CactusPie.RamCleanerInterval
                 EvaluateGc(now);
                 EvaluateAssets(now);
                 EvaluateTrim(now);
+                EvaluateLeak(now);
                 EvaluateLog(now);
             }
 
@@ -175,6 +187,9 @@ namespace CactusPie.RamCleanerInterval
             _unloadPendingSince = -1f;
             _weakUnloads = 0;
             _autoUnloadStopped = false;
+            _leak.Reset();
+            _leakNext = -1f;
+            _leakPendingSince = -1f;
 
             if (_inGame)
             {
@@ -217,7 +232,13 @@ namespace CactusPie.RamCleanerInterval
 
             _raidStartedAt = now;
             _nativeBaseline = _snapshot.Native;
+            _leakNext = now + LeakFirstSnapshotDelay;
             Logger.LogInfo($"Raid started{(started ? string.Empty : " (status timeout)")}: {DescribeForLog(_snapshot)}");
+            if (_unloadAuto.Value && s_autoUnloadUselessThisSession)
+            {
+                Logger.LogInfo("Auto asset unload stays off: it freed nothing in an earlier raid this session " +
+                               "(toggle '레이드 중 자동 정리' in F12 to try again)");
+            }
         }
 
         private bool IsQuietNow(float pendingSince, float maxDefer, float now)
@@ -333,7 +354,8 @@ namespace CactusPie.RamCleanerInterval
             }
 
             long native = _snapshot.Native;
-            if (!_inGame || !_unloadAuto.Value || _autoUnloadStopped || _raidStartedAt < 0f || native < 0)
+            if (!_inGame || !_unloadAuto.Value || _autoUnloadStopped || s_autoUnloadUselessThisSession ||
+                _raidStartedAt < 0f || native < 0)
             {
                 _unloadPendingSince = -1f;
                 return;
@@ -472,8 +494,10 @@ namespace CactusPie.RamCleanerInterval
                 if (_weakUnloads >= 2)
                 {
                     _autoUnloadStopped = true;
-                    Logger.LogWarning("Auto asset unload stopped for this raid: two unloads in a row freed < 0.5 GB. " +
-                                      "The native growth is not unused assets (likely something still referenced by a mod).");
+                    s_autoUnloadUselessThisSession = true;
+                    Logger.LogWarning("Auto asset unload stopped until the game restarts: two unloads in a row freed < 0.5 GB. " +
+                                      "The native growth is not unused assets (likely something still referenced by a mod). " +
+                                      "Turn on the leak tracker (F12 '누수 추적 켜기') to see what grows.");
                 }
             }
             else
@@ -556,6 +580,43 @@ namespace CactusPie.RamCleanerInterval
             });
         }
 
+        // ---------------------------------------------------------------- Leak tracker
+
+        private void EvaluateLeak(float now)
+        {
+            if (!_inGame || !_leakEnabled.Value || _leakNext < 0f || now < _leakNext)
+            {
+                _leakPendingSince = -1f;
+                return;
+            }
+
+            if (_leakPendingSince < 0f)
+            {
+                _leakPendingSince = now;
+            }
+
+            if (!IsQuietNow(_leakPendingSince, LeakMaxDeferSeconds, now))
+            {
+                return;
+            }
+
+            _leakPendingSince = -1f;
+            _leakNext = now + _leakIntervalMin.Value * 60f;
+            RunLeakSnapshot(_leak.Snapshots == 0 ? "baseline" : "interval" + QuietTag());
+        }
+
+        private void RunLeakSnapshot(string reason)
+        {
+            try
+            {
+                _leak.Snapshot(reason);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Leak snapshot failed: {ex}");
+            }
+        }
+
         // ---------------------------------------------------------------- Log / status / UI
 
         private void EvaluateLog(float now)
@@ -567,7 +628,7 @@ namespace CactusPie.RamCleanerInterval
             }
 
             _nextLog = now + interval;
-            Logger.LogInfo($"[mem] {DescribeForLog(_snapshot)} | GC {_snapshot.GcMode}{(_gc.Running ? " (collecting)" : string.Empty)} | " +
+            Logger.LogInfo($"[mem] {DescribeForLog(_snapshot)} | {DescribeWorld()} | GC {_snapshot.GcMode}{(_gc.Running ? " (collecting)" : string.Empty)} | " +
                            $"combat {(_combat.InventoryOpen ? "inventory" : Mathf.Min(_combat.SecondsSinceCombat, 9999f).ToString("0") + "s ago")}");
         }
 
@@ -577,6 +638,29 @@ namespace CactusPie.RamCleanerInterval
                    $"native {MemoryStats.Gb(s.Native)} GB | working set {MemoryStats.Gb(s.WorkingSet)} GB | private {MemoryStats.Gb(s.PrivateBytes)} GB | " +
                    $"VRAM {MemoryStats.Gb(_vram.Dedicated)} GB (+shared {MemoryStats.Gb(_vram.Shared)}) | " +
                    $"system free {MemoryStats.Gb(s.SystemAvailable)}/{MemoryStats.Gb(s.SystemTotal)} GB";
+        }
+
+        /// <summary>Bots and texture memory, to line the native growth up against what the raid is doing.</summary>
+        private static string DescribeWorld()
+        {
+            string bots = "bots ?";
+            try
+            {
+                GameWorld world = Singleton<GameWorld>.Instance;
+                if (world != null)
+                {
+                    int alive = world.AllAlivePlayersList.Count;
+                    int ever = world.AllPlayersEverExisted.Count();
+                    bots = $"players alive {alive}, dead {Math.Max(0, ever - alive)}";
+                }
+            }
+            catch (Exception)
+            {
+                // world being torn down
+            }
+
+            return $"{bots} | textures {MemoryStats.Gb((long)Texture.currentTextureMemory)} GB " +
+                   $"(non-streaming {MemoryStats.Gb((long)Texture.nonStreamingTextureMemory)})";
         }
 
         private void OnGcModeChanged(GarbageCollector.Mode mode)
@@ -653,14 +737,15 @@ namespace CactusPie.RamCleanerInterval
                   .Append(MemoryStats.Gb(_gcBaseline + (long)(_gcGrowthGb.Value * MemoryStats.BytesPerGb))).Append(" GB 도달 시\n");
             }
 
-            if (_autoUnloadStopped)
+            if (_autoUnloadStopped || s_autoUnloadUselessThisSession)
             {
-                sb.Append("레이드 중 자동 에셋 정리: 이번 레이드에서는 중단됨 (정리해도 거의 안 줄어서 — 모드 누수 의심)\n");
+                sb.Append("레이드 중 자동 에셋 정리: 게임 끌 때까지 중단됨 (정리해도 거의 안 줄어서 — 모드 누수 의심, '누수 추적'을 켜 보세요)\n");
             }
 
             sb.Append("마지막 GC 정리: ").Append(_gc.LastResult).Append('\n');
             sb.Append("마지막 워킹셋 정리: ").Append(_lastTrimResult).Append('\n');
-            sb.Append("마지막 에셋 정리: ").Append(_lastAssetResult);
+            sb.Append("마지막 에셋 정리: ").Append(_lastAssetResult).Append('\n');
+            sb.Append("누수 추적: ").Append(_leakEnabled.Value || _leak.Snapshots > 0 ? _leak.LastSummary : "꺼짐");
             _statusText = sb.ToString();
 
             if (_showOverlay.Value)
@@ -707,6 +792,11 @@ namespace CactusPie.RamCleanerInterval
             if (GUILayout.Button(_assetPhase != AssetPhase.Idle ? "에셋 정리 중..." : "에셋 정리", GUILayout.ExpandWidth(true)))
             {
                 StartAssetUnload("manual", _unloadGcFirst.Value, false);
+            }
+
+            if (GUILayout.Button("누수 추적 기록", GUILayout.ExpandWidth(true)))
+            {
+                RunLeakSnapshot("manual");
             }
         }
 
