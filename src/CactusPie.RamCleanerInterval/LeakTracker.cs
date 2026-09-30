@@ -26,6 +26,10 @@ namespace CactusPie.RamCleanerInterval
         private readonly ManualLogSource _log;
         private Dictionary<Type, int> _firstTypes;
         private Dictionary<string, int> _firstNames;
+        private Dictionary<string, int> _firstRoots;
+        private int _firstInactive;
+        private int _firstCorpses;
+        private int _firstPooledIdle;
         private Dictionary<Type, int> _lastTypes;
         private int _firstObjects;
         private float _firstTime;
@@ -44,6 +48,7 @@ namespace CactusPie.RamCleanerInterval
         {
             _firstTypes = null;
             _firstNames = null;
+            _firstRoots = null;
             _lastTypes = null;
             _snapshots = 0;
             LastSummary = "아직 없음";
@@ -56,7 +61,12 @@ namespace CactusPie.RamCleanerInterval
 
             var types = new Dictionary<Type, int>(512);
             var names = new Dictionary<string, int>(4096);
+            var roots = new Dictionary<string, int>(1024);
             int sceneObjects = 0;
+            int inactive = 0;
+            int corpses = 0;
+            int pooledActive = 0;
+            int pooledIdle = 0;
             long renderTexturePixels = 0;
             int renderTextures = 0;
 
@@ -81,9 +91,35 @@ namespace CactusPie.RamCleanerInterval
                     }
 
                     sceneObjects++;
+                    if (!go.activeInHierarchy)
+                    {
+                        inactive++;
+                    }
+
                     string name = NormalizeName(go.name);
                     names.TryGetValue(name, out int n);
                     names[name] = n + 1;
+
+                    // Which top-level object the growth hangs under: a corpse / bot, the asset pool, the level...
+                    string root = NormalizeName(go.transform.root.name);
+                    roots.TryGetValue(root, out int r);
+                    roots[root] = r + 1;
+                }
+                else if (obj is EFT.Interactive.Corpse)
+                {
+                    corpses++;
+                }
+                else if (obj is EFT.AssetsManager.AssetPoolObject pooled)
+                {
+                    // Pool objects sitting disabled = returned to the pool and waiting for reuse.
+                    if (pooled.gameObject.activeInHierarchy)
+                    {
+                        pooledActive++;
+                    }
+                    else
+                    {
+                        pooledIdle++;
+                    }
                 }
                 else if (obj is RenderTexture rt)
                 {
@@ -100,12 +136,17 @@ namespace CactusPie.RamCleanerInterval
             {
                 _firstTypes = types;
                 _firstNames = names;
+                _firstRoots = roots;
+                _firstInactive = inactive;
+                _firstCorpses = corpses;
+                _firstPooledIdle = pooledIdle;
                 _firstObjects = all.Length;
                 _firstTime = now;
                 _lastTypes = types;
                 LastSummary = $"{DateTime.Now:HH:mm:ss} 기준점 저장: 오브젝트 {all.Length:N0}개, 씬 GameObject {sceneObjects:N0}개 ({watch.ElapsedMilliseconds}ms)";
                 _log.LogInfo($"[leak] #{_snapshots} baseline ({reason}) in {watch.ElapsedMilliseconds}ms: objects {all.Length}, scene GameObjects {sceneObjects}, " +
-                             $"RenderTextures {renderTextures} ({renderTexturePixels / 1000000.0:0.0} MPix)");
+                             $"RenderTextures {renderTextures} ({renderTexturePixels / 1000000.0:0.0} MPix), inactive scene GameObjects {inactive}, " +
+                             $"corpses {corpses}, pool objects active {pooledActive} / idle {pooledIdle}");
                 return;
             }
 
@@ -113,12 +154,16 @@ namespace CactusPie.RamCleanerInterval
             var sb = new StringBuilder(2048);
             sb.Append($"[leak] #{_snapshots} ({reason}) in {watch.ElapsedMilliseconds}ms, {minutes:0.0} min after baseline: ");
             sb.Append($"objects {all.Length} ({Signed(all.Length - _firstObjects)}), scene GameObjects {sceneObjects}, ");
-            sb.Append($"RenderTextures {renderTextures} ({renderTexturePixels / 1000000.0:0.0} MPix)\n");
+            sb.Append($"RenderTextures {renderTextures} ({renderTexturePixels / 1000000.0:0.0} MPix), ");
+            sb.Append($"inactive scene GameObjects {inactive} ({Signed(inactive - _firstInactive)}), corpses {corpses} ({Signed(corpses - _firstCorpses)}), ");
+            sb.Append($"pool objects active {pooledActive} / idle {pooledIdle} ({Signed(pooledIdle - _firstPooledIdle)} idle)\n");
 
             sb.Append("  types grown since baseline (since last snapshot): ");
             AppendTop(sb, types, _firstTypes, t => t.FullName, _lastTypes);
             sb.Append("\n  scene GameObject names grown since baseline: ");
             AppendTop(sb, names, _firstNames, s => s, null);
+            sb.Append("\n  top-level (root) objects that gained children since baseline: ");
+            AppendTop(sb, roots, _firstRoots, s => s, null);
             _log.LogInfo(sb.ToString());
 
             KeyValuePair<Type, int> topType = types
