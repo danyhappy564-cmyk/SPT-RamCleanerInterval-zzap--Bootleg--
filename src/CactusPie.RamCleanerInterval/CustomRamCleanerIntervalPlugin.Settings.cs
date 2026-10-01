@@ -17,7 +17,7 @@ namespace CactusPie.RamCleanerInterval
         private const string InternalSection = "Internal";
 
         // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
-        private const int CurrentConfigVersion = 220;
+        private const int CurrentConfigVersion = 230;
 
         private const string GcCategory = "1. 자동 메모리 정리 (GC) — 추천";
         private const string TrimCategory = "2. 워킹셋 정리 (원본 RAM 클리너 방식)";
@@ -81,6 +81,17 @@ namespace CactusPie.RamCleanerInterval
                 {
                     _unloadAtStart.Value = false;
                     Logger.LogInfo("Settings migrated to 2.2.0: '레이드 시작 시 1회 정리' switched off (new default)");
+                }
+            }
+
+            if (_configVersion.Value < 230)
+            {
+                // Five real SAIN-sim logs (2026-09-29..10-01): every auto unload freed ~0 GB and cost a 0.5-1.5 s frame.
+                // The growth turned out to be per-death bot equipment that is still referenced (APBS mod item variety).
+                if (_unloadAuto.Value)
+                {
+                    _unloadAuto.Value = false;
+                    Logger.LogInfo("Settings migrated to 2.3.0: '레이드 중 자동 정리' switched off (new default)");
                 }
             }
 
@@ -167,10 +178,11 @@ namespace CactusPie.RamCleanerInterval
                 "레이드가 시작되고 몇 초 뒤에 정리할지 정합니다.",
                 new AcceptableValueRange<int>(0, 60), 9);
 
-            _unloadAuto = Bind(AssetSection, AssetCategory, "Auto in raid", "레이드 중 자동 정리", true,
+            _unloadAuto = Bind(AssetSection, AssetCategory, "Auto in raid", "레이드 중 자동 정리", false,
                 "GC가 관리하지 않는 '네이티브 메모리'(텍스처·모델·사운드·물리, 모드가 만든 오브젝트 등)가 많이 늘면, " +
-                "조용한 순간에 안 쓰는 에셋을 내립니다. 두 번 연속 거의 안 줄면(에셋 문제가 아니라 모드 누수) " +
-                "게임을 끌 때까지 자동으로 그만둡니다(이 설정을 껐다 켜면 다시 시도).",
+                "조용한 순간에 안 쓰는 에셋을 내립니다. 두 번 연속 거의 안 줄면 게임을 끌 때까지 자동으로 그만둡니다. " +
+                "실측(SAIN 시뮬 로그 5개): 매번 거의 0GB만 줄고 0.5~1.5초 끊겨서 기본값을 껐습니다. " +
+                "레이드 중 메모리 증가는 대부분 죽은 봇의 장비(모드 아이템 종류가 많을수록 큼)라 에셋 정리로는 안 줄어듭니다.",
                 null, 8);
 
             _unloadNativeGrowthGb = Bind(AssetSection, AssetCategory, "Native growth trigger (GB)", "정리 시작 기준: 네이티브 증가량 (GB)", 8f,

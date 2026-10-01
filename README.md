@@ -18,6 +18,15 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 변경 이력
 
+- 2026-10-01 20:21 (KST) — **v2.3.0: 조사 마무리 — 원인 확정, 효과 없는 기능 기본 끔, 사망당 메모리 표시**
+  - **결론:** 레이드 중 메모리가 계속 느는 원인은 모드 버그가 아니라 **죽은 봇의 장비·무기 모델이 레이드 끝까지 남는 것**이고,
+    봇 장비에 쓰이는 **모드 아이템 종류가 많을수록** 커짐(APBS가 모드 무기·부품을 모든 봇에 섞어 쓰던 상태: 사망 1명당 280~340MB).
+    APBS를 "레이드마다 모드 아이템 일부만" 쓰도록 고친 뒤 5번째 로그: 초반 약 280MB → **후반(사망 44→68명) 약 64MB**로 줄어듦
+  - **레이드 중 자동 에셋 정리 기본값 끔:** 로그 5개에서 매번 거의 0GB만 줄고 0.5~1.5초 끊김. 기존 설정 파일에 켜져 있어도
+    이번 버전 첫 실행 때 한 번 자동으로 꺼 줌(수동 버튼은 그대로)
+  - **새 기능: 사망 1명당 메모리** — F12 '현재 상태'와 1분 로그(`per death ...`)에 "레이드 전체 평균 / 최근 10명 기준" MB 표시.
+    봇 스폰 모드 설정을 바꿨을 때 효과를 바로 비교할 수 있음 (참고: 정상 범위 약 60~120MB, 200MB 이상이면 모드 아이템이 너무 다양함)
+  - 그대로 확인된 것: 자동 GC(매번 1~1.5GB 회수, 끊김은 마지막 1프레임 약 50ms), 전투 중 미루기, VRAM 16GB 중 15.5GB 포화
 - 2026-09-30 19:11 (KST) — **v2.2.1: 세 번째 로그(누수 추적) 분석 + 추적 항목 추가**
   - 결과: 메모리 증가는 **죽은 봇 수와 거의 정비례** — 25분 동안 사망 94명, 네이티브 +26GB(1명당 약 280MB), 텍스처 메모리 +8.8GB.
     살아 있는 봇은 계속 약 10명 유지. 즉 "새는" 게 아니라 **죽은 봇의 몸·장비·무기가 레이드 내내 남아서** 쌓이는 것일 가능성이 큼
@@ -90,7 +99,7 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 설치
 
-1. `release\RamCleanerInterval-2.1.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
+1. `release\RamCleanerInterval-2.3.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
    `BepInEx\plugins\CactusPie.RamCleanerInterval\CactusPie.RamCleanerInterval.dll`로 들어갑니다.
 2. **예전 버전 DLL이 `BepInEx\plugins\`에 있으면 지우세요.**
 3. **SPTVRAMCleaner를 쓰고 있었다면 빼세요.** 이 모드에 같은 기능(개선판)이 들어 있어서, 둘 다 있으면 레이드 시작 때 두 번 정리합니다.
@@ -123,7 +132,7 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 |---|---|---|
 | 레이드 시작 시 1회 정리 | **끔** | 카운트다운이 끝난 뒤 안 쓰는 텍스처·모델을 내림. 실측: 5.6초 멈춤, VRAM 0.07GB 감소 → 기본 끔 |
 | 시작 후 대기 (초) | 3 | 레이드 시작 후 몇 초 뒤에 할지 |
-| 레이드 중 자동 정리 | 켬 | 네이티브 메모리가 많이 늘면 조용한 순간에 정리. 두 번 연속 효과가 없으면 게임을 끌 때까지 중단 |
+| 레이드 중 자동 정리 | **끔** | 네이티브 메모리가 많이 늘면 조용한 순간에 정리. 실측 5번 모두 효과 없음(0.5~1.5초 끊김만) → 기본 끔 |
 | 정리 시작 기준: 네이티브 증가량 (GB) | 8 | 마지막 정리 이후 이만큼 늘면 |
 | 자동 정리 최소 간격 (분) | 10 | 에셋 정리는 1~3초 끊길 수 있어서 간격을 넉넉히 |
 | 정리 전에 GC 먼저 | 켬 | 버려진 오브젝트가 붙잡고 있던 에셋까지 내리기 위해 GC를 먼저 끝냄 |
@@ -156,29 +165,31 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 수동 실행 버튼에 **[누수 추적 기록]**도 추가됐습니다(바로 한 번 세기).
 
-## 테스트할 때 봐 주실 것 (디버깅용)
+## 레이드 중 메모리가 계속 늘 때 (조사 결과 요약)
 
-**v2.2.0 테스트 방법 (누수 찾기):** F12 → "6. 누수 추적" → **켜기**, 평소처럼 SAIN 시뮬을 20~30분 돌린 뒤 로그를 보내 주세요.
-`[leak]` 줄에 "레이드 시작 이후 가장 많이 늘어난 오브젝트 종류/이름"이 찍힙니다. 예를 들어 `UnityEngine.Material +50000`이면
-어떤 모드가 재질을 계속 복사하는 것이고, 이름 칸에 모드 특유의 이름(이펙트, 데칼 등)이 보이면 범인 후보가 됩니다.
+SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 
+1. **관리 메모리(GC)는 이 모드가 잡습니다.** 게임이 레이드 중 꺼 둔 GC를 대신 돌려서 매번 1~1.5GB를 회수합니다.
+2. **나머지 증가는 "죽은 봇 수"에 비례합니다.** 시체·떨어진 무기·게임의 모델 보관함(풀)에 남은 장비 모델이 레이드 끝까지 남습니다.
+   청소(에셋 정리·워킹셋 정리)로는 줄지 않습니다 — 아직 쓰이는(참조된) 오브젝트이기 때문입니다.
+3. **얼마나 크게 늘지는 봇 장비의 다양성이 정합니다.** 모드 무기·부품·장비 종류가 많을수록 봇마다 새 모델·텍스처를 불러옵니다.
+   APBS에서 "레이드마다 모드 아이템 일부만" 쓰게 하면 사망 1명당 280~340MB → 60~75MB 수준으로 줄었습니다.
+4. 확인 방법: F12 '현재 상태'의 **사망 1명당 메모리**, 또는 로그 `[mem]` 줄의 `per death ...`.
+   200MB 이상이 계속되면 봇 스폰 모드의 모드 아이템 설정을 줄여 보세요.
 
-`E:\SPT 4.1\BepInEx\LogOutput.log`에서 `RAM 클리너` 줄을 찾아 주세요.
+### 로그에서 볼 것 (`E:\SPT 4.1\BepInEx\LogOutput.log`, `RAM 클리너` 줄)
 
-1. **레이드 시작:** `Raid started: ...` 다음 3초쯤 뒤 `UnloadUnusedAssets done (raid start) ... VRAM a -> b GB (freed c)` —
-   레이드 시작 정리로 VRAM이 얼마나 줄었는지.
-2. **`[mem]` 줄(1분마다)** — `native`와 `VRAM` 값이 새로 찍힙니다. `VRAM -1.00`이면 측정이 안 되는 환경입니다.
-3. **레이드 중 자동 에셋 정리:** `UnloadUnusedAssets done (auto, native +8.xx GB ...) ... freed x GB`
-   - `freed`가 수 GB면: 늘어나던 게 안 쓰는 에셋이었음 → 이 기능이 누수를 잡아 줌
-   - `freed`가 0.5GB 미만으로 두 번이면 `Auto asset unload stopped for this raid` → **모드 누수**. 이때는 모드를 빼 가며 비교해야
-     원인을 찾을 수 있습니다 (`[mem]`의 `native`가 1분에 얼마나 느는지 비교).
-4. **GC:** `GC start (auto, ..., quiet 20s)` / `inventory open` — 조용한 순간에 돌았는지. `GC done ... max slice Nms at frame X/Y`.
-5. **워킹셋 정리:** `background call Nms` — 이제 이 시간 동안 게임이 멈추지 않아야 합니다.
+| 줄 | 의미 |
+|---|---|
+| `[mem] ... per death N MB over M deaths, last 10 deaths K MB` | 사망 1명당 메모리 증가 (위 3번) |
+| `GC done ... max slice Nms at frame X/Y` | 자동 GC 결과. 긴 프레임은 마지막 1개(약 50ms)가 정상 |
+| `Working set trim ... background call Nms` | RAM 부족 비상 정리. 별도 스레드라 이 시간 동안 게임이 멈추지 않음 |
+| `[leak] ...` | 누수 추적을 켰을 때만. 무엇이 늘었는지(종류·이름·위치) |
 
 ## 직접 빌드
 
 - 루트의 `build.bat` 더블클릭 → Release 빌드, `E:\SPT 4.1\BepInEx\plugins\CactusPie.RamCleanerInterval\`로 자동 복사,
-  `release\RamCleanerInterval-2.1.0-SPT4.1.zip` 생성.
+  `release\RamCleanerInterval-2.3.0-SPT4.1.zip` 생성.
 - SPT 경로가 다르면 `src\RamCleaner.local.props.example`을 `src\RamCleaner.local.props`로 복사해서 경로를 고치세요.
 - 필요한 것: .NET SDK 8 이상. 참조는 SPT 설치 폴더의 `EscapeFromTarkov_Data\Managed`와 `BepInEx\core`에서 가져옵니다
   (Harmony·`spt-reflection`은 쓰지 않습니다 — 이 모드는 게임 코드를 패치하지 않습니다).
@@ -192,5 +203,6 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 | `GcRunner.cs` | GC를 여러 프레임에 나눠 돌리는 부분. 게임이 GC를 꺼 뒀으면 잠깐 "수동"으로 켜고 끝나면 되돌림 |
 | `CombatTracker.cs` | "지금 정리해도 되나" 판단 — 플레이어가 쏘거나(`OnShot`) 맞거나(`BeingHitAction`) 조준 중인지, 인벤토리가 열렸는지(`OnInventoryOpened`) |
 | `VramMonitor.cs` | 이 게임의 VRAM 사용량 측정 (윈도우 성능 카운터, 백그라운드 스레드) |
+| `LeakTracker.cs` | 누수 추적(진단용): 오브젝트를 종류·이름·최상위 부모별로 세서 늘어난 것을 로그에 남김 |
 | `MemoryStats.cs` | 메모리 수치 읽기(윈도우 API)와 워킹셋 정리 |
 | `GameHelper.cs` | 지금 레이드 중인지 판단 (은신처는 제외) — 원본 그대로 |

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
@@ -13,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.2.1")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.3.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -72,6 +73,15 @@ namespace CactusPie.RamCleanerInterval
         private float _assetLongestFrame;
         private float _raidStartedAt = -1f;
         private float _inGameSince;
+
+        // Memory per dead bot: the number that actually tells whether a raid's growth is normal
+        // (2026-10-01: 280-340 MB/death with every mod item allowed, ~60-75 MB once APBS limits mod items per raid).
+        private readonly List<KeyValuePair<int, long>> _deathSamples =
+            new List<KeyValuePair<int, long>>();
+        private int _alive = -1;
+        private int _dead = -1;
+        private int _deadAtStart;
+        private long _nativeAtStart = -1;
         private bool _startUnloadDone;
         private long _nativeBaseline = -1;
         private float _lastUnload = float.NegativeInfinity;
@@ -154,6 +164,7 @@ namespace CactusPie.RamCleanerInterval
 
             _combat.Poll();
             _snapshot = MemoryStats.Sample();
+            SampleWorld();
             bool autoActive = _inGame || !_onlyInRaid.Value;
 
             if (_inGame)
@@ -232,6 +243,9 @@ namespace CactusPie.RamCleanerInterval
 
             _raidStartedAt = now;
             _nativeBaseline = _snapshot.Native;
+            _nativeAtStart = _snapshot.Native;
+            _deadAtStart = Math.Max(0, _dead);
+            _deathSamples.Clear();
             _leakNext = now + LeakFirstSnapshotDelay;
             Logger.LogInfo($"Raid started{(started ? string.Empty : " (status timeout)")}: {DescribeForLog(_snapshot)}");
             if (_unloadAuto.Value && s_autoUnloadUselessThisSession)
@@ -628,7 +642,7 @@ namespace CactusPie.RamCleanerInterval
             }
 
             _nextLog = now + interval;
-            Logger.LogInfo($"[mem] {DescribeForLog(_snapshot)} | {DescribeWorld()} | GC {_snapshot.GcMode}{(_gc.Running ? " (collecting)" : string.Empty)} | " +
+            Logger.LogInfo($"[mem] {DescribeForLog(_snapshot)} | {DescribeWorld()} | {DescribePerDeath(false)} | GC {_snapshot.GcMode}{(_gc.Running ? " (collecting)" : string.Empty)} | " +
                            $"combat {(_combat.InventoryOpen ? "inventory" : Mathf.Min(_combat.SecondsSinceCombat, 9999f).ToString("0") + "s ago")}");
         }
 
@@ -640,18 +654,17 @@ namespace CactusPie.RamCleanerInterval
                    $"system free {MemoryStats.Gb(s.SystemAvailable)}/{MemoryStats.Gb(s.SystemTotal)} GB";
         }
 
-        /// <summary>Bots and texture memory, to line the native growth up against what the raid is doing.</summary>
-        private static string DescribeWorld()
+        private void SampleWorld()
         {
-            string bots = "bots ?";
+            _alive = -1;
+            _dead = -1;
             try
             {
-                GameWorld world = Singleton<GameWorld>.Instance;
+                GameWorld world = _inGame ? Singleton<GameWorld>.Instance : null;
                 if (world != null)
                 {
-                    int alive = world.AllAlivePlayersList.Count;
-                    int ever = world.AllPlayersEverExisted.Count();
-                    bots = $"players alive {alive}, dead {Math.Max(0, ever - alive)}";
+                    _alive = world.AllAlivePlayersList.Count;
+                    _dead = Math.Max(0, world.AllPlayersEverExisted.Count() - _alive);
                 }
             }
             catch (Exception)
@@ -659,6 +672,54 @@ namespace CactusPie.RamCleanerInterval
                 // world being torn down
             }
 
+            if (_raidStartedAt < 0f || _dead < 0 || _snapshot.Native < 0)
+            {
+                return;
+            }
+
+            int last = _deathSamples.Count > 0 ? _deathSamples[_deathSamples.Count - 1].Key : -1;
+            if (_dead != last)
+            {
+                _deathSamples.Add(new KeyValuePair<int, long>(_dead, _snapshot.Native));
+            }
+        }
+
+        /// <summary>"+X MB per death" over the whole raid and over the last 10 deaths.</summary>
+        private string DescribePerDeath(bool korean)
+        {
+            int deaths = _dead - _deadAtStart;
+            if (_nativeAtStart < 0 || deaths < 3)
+            {
+                return korean ? "사망 1명당 메모리: 아직 표본 부족 (사망 3명 이상부터)" : "per death n/a";
+            }
+
+            double total = (_snapshot.Native - _nativeAtStart) / (1024d * 1024d) / deaths;
+            string recent = string.Empty;
+            KeyValuePair<int, long>? from = null;
+            for (int i = _deathSamples.Count - 1; i >= 0; i--)
+            {
+                if (_deathSamples[i].Key <= _dead - 10)
+                {
+                    from = _deathSamples[i];
+                    break;
+                }
+            }
+
+            if (from.HasValue && _dead > from.Value.Key)
+            {
+                double last10 = (_snapshot.Native - from.Value.Value) / (1024d * 1024d) / (_dead - from.Value.Key);
+                recent = korean ? $", 최근 {_dead - from.Value.Key}명 기준 {last10:0}MB" : $", last {_dead - from.Value.Key} deaths {last10:0} MB";
+            }
+
+            return korean
+                ? $"사망 1명당 메모리: 레이드 전체 {total:0}MB{recent} (사망 {deaths}명)"
+                : $"per death {total:0} MB over {deaths} deaths{recent}";
+        }
+
+        /// <summary>Bots and texture memory, to line the native growth up against what the raid is doing.</summary>
+        private string DescribeWorld()
+        {
+            string bots = _dead >= 0 ? $"players alive {_alive}, dead {_dead}" : "bots ?";
             return $"{bots} | textures {MemoryStats.Gb((long)Texture.currentTextureMemory)} GB " +
                    $"(non-streaming {MemoryStats.Gb((long)Texture.nonStreamingTextureMemory)})";
         }
@@ -705,6 +766,11 @@ namespace CactusPie.RamCleanerInterval
             else
             {
                 sb.Append(_vram.Failed ? "측정 불가 (윈도우 성능 카운터 없음)\n" : "측정 중...\n");
+            }
+
+            if (_inGame && _raidStartedAt >= 0f)
+            {
+                sb.Append(DescribePerDeath(true)).Append('\n');
             }
 
             sb.Append("GC 상태: ").Append(gcState)
