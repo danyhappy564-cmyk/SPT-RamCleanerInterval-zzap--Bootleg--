@@ -14,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.3.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.4.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -41,6 +41,14 @@ namespace CactusPie.RamCleanerInterval
         private CombatTracker _combat;
         private VramMonitor _vram;
         private LeakTracker _leak;
+        private HitchMonitor _hitch;
+        private RaidReport _report;
+        private MemoryWarnings _warnings;
+        private Func<string> _hitchContext;
+        private int _leakFrame = -1;
+        private double _leakMs;
+        private int _assetActiveFrame = -1;
+        private string _lastReport = "아직 없음";
         private float _leakNext = -1f;
         private float _leakPendingSince = -1f;
 
@@ -105,6 +113,10 @@ namespace CactusPie.RamCleanerInterval
             _combat.InventoryOpened += () => _evaluateNow = true;
             _vram = new VramMonitor();
             _leak = new LeakTracker(Logger);
+            _hitch = new HitchMonitor(Logger);
+            _report = new RaidReport();
+            _warnings = new MemoryWarnings();
+            _hitchContext = () => $"players alive {_alive}, dead {_dead}, GC {GarbageCollector.GCMode}";
 
             BindSettings();
             _unloadAuto.SettingChanged += (_, __) => s_autoUnloadUselessThisSession = false;
@@ -132,6 +144,8 @@ namespace CactusPie.RamCleanerInterval
             {
                 action();
             }
+
+            CheckHitch(now);
 
             if (_gc.Running)
             {
@@ -165,6 +179,12 @@ namespace CactusPie.RamCleanerInterval
             _combat.Poll();
             _snapshot = MemoryStats.Sample();
             SampleWorld();
+            if (_inGame)
+            {
+                _report.Sample(_snapshot, _vram.Dedicated, _dead);
+            }
+
+            EvaluateWarnings(now);
             bool autoActive = _inGame || !_onlyInRaid.Value;
 
             if (_inGame)
@@ -220,6 +240,7 @@ namespace CactusPie.RamCleanerInterval
                 _gc.Abort(false, "레이드가 끝나서 중단");
                 _combat.Unbind();
                 Logger.LogInfo("Left raid");
+                FinishRaidReport();
             }
         }
 
@@ -246,6 +267,9 @@ namespace CactusPie.RamCleanerInterval
             _nativeAtStart = _snapshot.Native;
             _deadAtStart = Math.Max(0, _dead);
             _deathSamples.Clear();
+            _hitch.Reset();
+            _warnings.ResetRaid();
+            _report.Begin(_snapshot, _dead);
             _leakNext = now + LeakFirstSnapshotDelay;
             Logger.LogInfo($"Raid started{(started ? string.Empty : " (status timeout)")}: {DescribeForLog(_snapshot)}");
             if (_unloadAuto.Value && s_autoUnloadUselessThisSession)
@@ -327,6 +351,10 @@ namespace CactusPie.RamCleanerInterval
         private void OnGcFinished()
         {
             _gcBaseline = _gc.LastUsedAfter;
+            if (_inGame)
+            {
+                _report.AddGc(_gc.LastUsedBefore - _gc.LastUsedAfter, _gc.LastMaxSliceMs);
+            }
 
             if (_assetPhase == AssetPhase.WaitingForGc)
             {
@@ -435,6 +463,7 @@ namespace CactusPie.RamCleanerInterval
             _lastAssetResult = $"{DateTime.Now:HH:mm:ss} 에셋 내리는 중...";
             Logger.LogInfo($"UnloadUnusedAssets start ({_assetReason})");
             _assetOperation = Resources.UnloadUnusedAssets();
+            _assetActiveFrame = Time.frameCount;
         }
 
         private void TickAssetUnload(float now)
@@ -446,6 +475,7 @@ namespace CactusPie.RamCleanerInterval
 
             // Longest frame while the unload runs = the hitch the player actually felt.
             _assetLongestFrame = Mathf.Max(_assetLongestFrame, Time.unscaledDeltaTime);
+            _assetActiveFrame = Time.frameCount;
 
             if (_assetPhase == AssetPhase.Unloading)
             {
@@ -472,6 +502,7 @@ namespace CactusPie.RamCleanerInterval
         private void FinishAssetUnload(float now)
         {
             _assetPhase = AssetPhase.Idle;
+            _report.AddAssetUnload();
             _lastUnload = now;
 
             MemorySnapshot after = MemoryStats.Sample();
@@ -585,6 +616,7 @@ namespace CactusPie.RamCleanerInterval
                 _mainThread.Enqueue(() =>
                 {
                     Interlocked.Exchange(ref _trimRunning, 0);
+                    _report.AddTrim();
                     _lastTrimResult = ok
                         ? $"{DateTime.Now:HH:mm:ss} 워킹셋 {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB ({reason})"
                         : $"{DateTime.Now:HH:mm:ss} 실패 (윈도우 API 호출 불가)";
@@ -592,6 +624,106 @@ namespace CactusPie.RamCleanerInterval
                                    $"background call {watch.Elapsed.TotalMilliseconds:0}ms");
                 });
             });
+        }
+
+        // ---------------------------------------------------------------- Hitch detector / raid report / warnings
+
+        private void CheckHitch(float now)
+        {
+            int previousFrame = Time.frameCount - 1;
+            if (_gc.LastTickFrame == previousFrame)
+            {
+                _hitch.NoteGc(_gc.LastTickMs);
+            }
+
+            if (_leakFrame == previousFrame)
+            {
+                _hitch.NoteLeakSnapshot(_leakMs);
+            }
+
+            if (_assetActiveFrame >= previousFrame)
+            {
+                _hitch.NoteAssetUnload();
+            }
+
+            if (_trimRunning != 0)
+            {
+                _hitch.NoteTrimRunning();
+            }
+
+            // Skip the first seconds after the countdown: spawn waves and streaming make those frames noisy.
+            bool active = _hitchEnabled.Value && _inGame && _raidStartedAt >= 0f && now - _raidStartedAt > 5f;
+            _hitch.Check(active, _hitchThresholdMs.Value, _hitchContext);
+        }
+
+        private void FinishRaidReport()
+        {
+            if (!_report.Active)
+            {
+                return;
+            }
+
+            _report.End(_hitch, out string logLine, out string notification);
+            _lastReport = _report.LastSummaryKorean;
+            if (!_reportEnabled.Value)
+            {
+                return;
+            }
+
+            Logger.LogInfo(logLine);
+            if (_reportNotify.Value)
+            {
+                Notify(notification, false);
+            }
+        }
+
+        private void EvaluateWarnings(float now)
+        {
+            if (!_warnEnabled.Value)
+            {
+                return;
+            }
+
+            string warning = _warnings.Evaluate(_snapshot, _inGame ? _vram.Dedicated : -1, _warnCommitPercent.Value,
+                _warnVram.Value, _warnVramPercent.Value, _warnVramSeconds.Value, now);
+            if (warning == null)
+            {
+                return;
+            }
+
+            _report.AddWarning();
+            Logger.LogWarning(warning);
+            if (_warnNotify.Value)
+            {
+                Notify(warning, true);
+            }
+        }
+
+        private void Notify(string text, bool warning)
+        {
+            try
+            {
+                ShowGameNotification(text, warning);
+            }
+            catch (Exception ex)
+            {
+                // UI not ready (loading screen) or the API changed in a game update: the log line is already written.
+                Logger.LogDebug($"Notification not shown: {ex.Message}");
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void ShowGameNotification(string text, bool warning)
+        {
+            if (warning)
+            {
+                EFT.Communications.NotificationManager.DisplayWarningNotification(text, EFT.Communications.ENotificationDurationType.Long);
+            }
+            else
+            {
+                EFT.Communications.NotificationManager.DisplayMessageNotification(text, EFT.Communications.ENotificationDurationType.Long,
+                    EFT.Communications.ENotificationIconType.Note);
+            }
         }
 
         // ---------------------------------------------------------------- Leak tracker
@@ -621,6 +753,7 @@ namespace CactusPie.RamCleanerInterval
 
         private void RunLeakSnapshot(string reason)
         {
+            var watch = Stopwatch.StartNew();
             try
             {
                 _leak.Snapshot(reason);
@@ -629,6 +762,10 @@ namespace CactusPie.RamCleanerInterval
             {
                 Logger.LogError($"Leak snapshot failed: {ex}");
             }
+
+            watch.Stop();
+            _leakFrame = Time.frameCount;
+            _leakMs = watch.Elapsed.TotalMilliseconds;
         }
 
         // ---------------------------------------------------------------- Log / status / UI
@@ -811,6 +948,22 @@ namespace CactusPie.RamCleanerInterval
             sb.Append("마지막 GC 정리: ").Append(_gc.LastResult).Append('\n');
             sb.Append("마지막 워킹셋 정리: ").Append(_lastTrimResult).Append('\n');
             sb.Append("마지막 에셋 정리: ").Append(_lastAssetResult).Append('\n');
+            if (_hitchEnabled.Value)
+            {
+                sb.Append("끊김(이번 레이드): ").Append(_hitch.Count).Append("회, 그중 이 모드 ").Append(_hitch.Ours)
+                  .Append("회, 최대 ").Append(_hitch.MaxMs.ToString("0")).Append("ms · 마지막: ").Append(_hitch.LastText).Append('\n');
+            }
+
+            if (_warnEnabled.Value)
+            {
+                sb.Append("마지막 경고: ").Append(_warnings.LastText).Append('\n');
+            }
+
+            if (_reportEnabled.Value)
+            {
+                sb.Append("마지막 레이드 결산: ").Append(_lastReport).Append('\n');
+            }
+
             sb.Append("누수 추적: ").Append(_leakEnabled.Value || _leak.Snapshots > 0 ? _leak.LastSummary : "꺼짐");
             _statusText = sb.ToString();
 

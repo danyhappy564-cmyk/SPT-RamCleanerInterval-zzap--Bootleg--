@@ -18,6 +18,14 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 변경 이력
 
+- 2026-10-02 08:33 (KST) — **v2.4.0: 끊김 감지기 · 레이드 결산 리포트 · 메모리 위험 경고 추가** (셋 다 F12에서 켜고 끌 수 있음, 기본 켬)
+  - **끊김 감지기:** 레이드 중 한 프레임이 50ms(설정 가능)를 넘으면 로그 `[hitch]` 줄에 기록. 그 프레임에 이 모드가 GC·에셋 정리·
+    누수 추적·워킹셋 정리를 하고 있었는지 같이 적어서 **"이 끊김이 RAM 클리너 때문인지, 다른 원인인지"** 바로 구분됨.
+    로그가 넘치지 않게 0.5초에 한 줄까지만 남기고 나머지는 개수만 셈
+  - **레이드 결산 리포트:** 레이드가 끝나면 시간·사망 수·사망 1명당 메모리·최고 메모리/VRAM·가장 적었던 남은 커밋·GC 횟수와 회수량·
+    끊김 횟수(이 모드 때문인 것/100ms 이상/최대)를 로그 `[raid report]` 한 줄 + 게임 알림 + F12 '현재 상태'에 정리
+  - **메모리 위험 경고:** 커밋 메모리(RAM+페이지 파일 한도)가 10% 또는 2GB 아래로 떨어지면 게임 알림으로 경고(5분에 한 번까지,
+    한도를 넘으면 게임이 튕김). VRAM이 95% 이상인 상태가 2분 넘게 이어지면 레이드마다 한 번 경고
 - 2026-10-01 20:21 (KST) — **v2.3.0: 조사 마무리 — 원인 확정, 효과 없는 기능 기본 끔, 사망당 메모리 표시**
   - **결론:** 레이드 중 메모리가 계속 느는 원인은 모드 버그가 아니라 **죽은 봇의 장비·무기 모델이 레이드 끝까지 남는 것**이고,
     봇 장비에 쓰이는 **모드 아이템 종류가 많을수록** 커짐(APBS가 모드 무기·부품을 모든 봇에 섞어 쓰던 상태: 사망 1명당 280~340MB).
@@ -99,7 +107,7 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 설치
 
-1. `release\RamCleanerInterval-2.3.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
+1. `release\RamCleanerInterval-2.4.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
    `BepInEx\plugins\CactusPie.RamCleanerInterval\CactusPie.RamCleanerInterval.dll`로 들어갑니다.
 2. **예전 버전 DLL이 `BepInEx\plugins\`에 있으면 지우세요.**
 3. **SPTVRAMCleaner를 쓰고 있었다면 빼세요.** 이 모드에 같은 기능(개선판)이 들어 있어서, 둘 다 있으면 레이드 시작 때 두 번 정리합니다.
@@ -165,6 +173,31 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 수동 실행 버튼에 **[누수 추적 기록]**도 추가됐습니다(바로 한 번 세기).
 
+### 7. 끊김 감지기
+
+| 항목 | 기본값 | 설명 |
+|---|---|---|
+| 끊김 감지기 켜기 | 켬 | 기준보다 오래 걸린 프레임을 로그 `[hitch]`에 기록하고, 이 모드 탓인지 표시. 기록만 하므로 게임 동작에는 영향 없음 |
+| 끊김 기준 (ms) | 50 | 60fps 한 프레임 ≈ 16ms. 레이드 시작 후 5초, 게임 창이 비활성일 때는 기록 안 함 |
+
+### 8. 레이드 결산 리포트
+
+| 항목 | 기본값 | 설명 |
+|---|---|---|
+| 레이드 결산 리포트 켜기 | 켬 | 레이드 끝날 때 로그 `[raid report]` + F12 '현재 상태'에 요약 |
+| 게임 알림으로도 표시 | 켬 | 오른쪽 아래 게임 알림으로 3줄 요약 |
+
+### 9. 메모리 위험 경고
+
+| 항목 | 기본값 | 설명 |
+|---|---|---|
+| 메모리 위험 경고 켜기 | 켬 | 커밋(RAM+페이지 파일 한도)이 바닥나기 직전이면 경고 (5분에 한 번까지) |
+| 커밋 여유 기준 (%) | 10 | 남은 커밋이 이 % 또는 2GB 미만이면 경고 |
+| VRAM 포화 경고 | 켬 | VRAM이 기준 이상인 상태가 계속되면 레이드마다 한 번 경고 |
+| VRAM 포화 기준 (%) | 95 | |
+| VRAM 포화 지속 시간 (초) | 120 | 잠깐 차는 건 무시 |
+| 게임 알림으로 표시 | 켬 | 끄면 로그와 F12에만 남음 |
+
 ## 레이드 중 메모리가 계속 늘 때 (조사 결과 요약)
 
 SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
@@ -185,11 +218,15 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 | `GC done ... max slice Nms at frame X/Y` | 자동 GC 결과. 긴 프레임은 마지막 1개(약 50ms)가 정상 |
 | `Working set trim ... background call Nms` | RAM 부족 비상 정리. 별도 스레드라 이 시간 동안 게임이 멈추지 않음 |
 | `[leak] ...` | 누수 추적을 켰을 때만. 무엇이 늘었는지(종류·이름·위치) |
+| `[hitch] 87ms frame ... — RAM cleaner: GC slice 52ms` | 끊김 중 **이 모드 탓**인 것 (어떤 작업이었는지 표시) |
+| `[hitch] 120ms frame ... — not RAM cleaner` | 끊김이지만 **다른 원인** (다른 모드·게임 자체) |
+| `[raid report] ...` | 레이드 결산 한 줄 |
+| `[경고] 메모리 한도 임박 ...` / `[경고] VRAM 포화 ...` | 메모리 위험 경고 |
 
 ## 직접 빌드
 
 - 루트의 `build.bat` 더블클릭 → Release 빌드, `E:\SPT 4.1\BepInEx\plugins\CactusPie.RamCleanerInterval\`로 자동 복사,
-  `release\RamCleanerInterval-2.3.0-SPT4.1.zip` 생성.
+  `release\RamCleanerInterval-2.4.0-SPT4.1.zip` 생성.
 - SPT 경로가 다르면 `src\RamCleaner.local.props.example`을 `src\RamCleaner.local.props`로 복사해서 경로를 고치세요.
 - 필요한 것: .NET SDK 8 이상. 참조는 SPT 설치 폴더의 `EscapeFromTarkov_Data\Managed`와 `BepInEx\core`에서 가져옵니다
   (Harmony·`spt-reflection`은 쓰지 않습니다 — 이 모드는 게임 코드를 패치하지 않습니다).
@@ -204,5 +241,8 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 | `CombatTracker.cs` | "지금 정리해도 되나" 판단 — 플레이어가 쏘거나(`OnShot`) 맞거나(`BeingHitAction`) 조준 중인지, 인벤토리가 열렸는지(`OnInventoryOpened`) |
 | `VramMonitor.cs` | 이 게임의 VRAM 사용량 측정 (윈도우 성능 카운터, 백그라운드 스레드) |
 | `LeakTracker.cs` | 누수 추적(진단용): 오브젝트를 종류·이름·최상위 부모별로 세서 늘어난 것을 로그에 남김 |
+| `HitchMonitor.cs` | 끊김 감지기: 긴 프레임 기록 + 그 프레임에 이 모드가 한 일 표시 |
+| `RaidReport.cs` | 레이드 결산: 한 판 동안의 최고치·횟수를 모아 끝날 때 요약 |
+| `MemoryWarnings.cs` | 메모리 위험 경고: 커밋 한도 임박, VRAM 포화 |
 | `MemoryStats.cs` | 메모리 수치 읽기(윈도우 API)와 워킹셋 정리 |
 | `GameHelper.cs` | 지금 레이드 중인지 판단 (은신처는 제외) — 원본 그대로 |

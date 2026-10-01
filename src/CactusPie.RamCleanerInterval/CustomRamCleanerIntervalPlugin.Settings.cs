@@ -14,6 +14,9 @@ namespace CactusPie.RamCleanerInterval
         private const string AssetSection = "4. Assets";
         private const string TimingSection = "5. Timing";
         private const string LeakSection = "6. Leak tracker";
+        private const string HitchSection = "7. Hitch detector";
+        private const string ReportSection = "8. Raid report";
+        private const string WarningSection = "9. Warnings";
         private const string InternalSection = "Internal";
 
         // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
@@ -25,6 +28,9 @@ namespace CactusPie.RamCleanerInterval
         private const string TimingCategory = "4. 전투 중에는 미루기";
         private const string GeneralCategory = "5. 공통 · 수동 실행 · 상태";
         private const string LeakCategory = "6. 누수 추적 (진단용)";
+        private const string HitchCategory = "7. 끊김 감지기";
+        private const string ReportCategory = "8. 레이드 결산 리포트";
+        private const string WarningCategory = "9. 메모리 위험 경고";
 
         private ConfigEntry<bool> _gcEnabled;
         private ConfigEntry<float> _gcGrowthGb;
@@ -54,6 +60,17 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<int> _leakIntervalMin;
         private ConfigEntry<int> _configVersion;
 
+        private ConfigEntry<bool> _hitchEnabled;
+        private ConfigEntry<int> _hitchThresholdMs;
+        private ConfigEntry<bool> _reportEnabled;
+        private ConfigEntry<bool> _reportNotify;
+        private ConfigEntry<bool> _warnEnabled;
+        private ConfigEntry<int> _warnCommitPercent;
+        private ConfigEntry<bool> _warnVram;
+        private ConfigEntry<int> _warnVramPercent;
+        private ConfigEntry<int> _warnVramSeconds;
+        private ConfigEntry<bool> _warnNotify;
+
         private ConfigEntry<bool> _onlyInRaid;
         private ConfigEntry<bool> _showOverlay;
         private ConfigEntry<int> _logIntervalSec;
@@ -66,6 +83,9 @@ namespace CactusPie.RamCleanerInterval
             BindTimingSettings();
             BindGeneralSettings();
             BindLeakSettings();
+            BindHitchSettings();
+            BindReportSettings();
+            BindWarningSettings();
             MigrateSettings();
         }
 
@@ -96,6 +116,59 @@ namespace CactusPie.RamCleanerInterval
             }
 
             _configVersion.Value = CurrentConfigVersion;
+        }
+
+        private void BindHitchSettings()
+        {
+            _hitchEnabled = Bind(HitchSection, HitchCategory, "Enabled", "끊김 감지기 켜기", true,
+                "레이드 중 한 프레임이 아래 기준보다 오래 걸리면 로그([hitch] 줄)에 남기고, 그 순간 이 모드가 GC·에셋 정리·누수 추적·" +
+                "워킹셋 정리 중이었는지 같이 적습니다. '이 끊김이 RAM 클리너 때문인가?'를 가려내는 용도입니다. " +
+                "기록만 하므로 게임 동작에는 영향이 없습니다.",
+                null, 10);
+
+            _hitchThresholdMs = Bind(HitchSection, HitchCategory, "Threshold (ms)", "끊김 기준 (ms)", 50,
+                "이보다 오래 걸린 프레임만 기록합니다. 참고: 60fps 한 프레임은 약 16ms, 50ms면 눈에 띄는 끊김입니다.",
+                new AcceptableValueRange<int>(20, 1000), 9);
+        }
+
+        private void BindReportSettings()
+        {
+            _reportEnabled = Bind(ReportSection, ReportCategory, "Enabled", "레이드 결산 리포트 켜기", true,
+                "레이드가 끝나면 최고 메모리, 사망 1명당 메모리, GC 횟수·회수량, 끊김 횟수(이 모드 때문인 것 포함)를 " +
+                "로그([raid report] 줄)와 F12 '현재 상태'에 한 번에 정리합니다. 설정을 바꿔 가며 판마다 비교할 때 쓰세요.",
+                null, 10);
+
+            _reportNotify = Bind(ReportSection, ReportCategory, "In-game notification", "게임 알림으로도 표시", true,
+                "결산 요약을 게임 오른쪽 아래 알림으로도 띄웁니다. 끄면 로그와 F12에만 남습니다.",
+                null, 9);
+        }
+
+        private void BindWarningSettings()
+        {
+            _warnEnabled = Bind(WarningSection, WarningCategory, "Enabled", "메모리 위험 경고 켜기", true,
+                "커밋 메모리(RAM + 페이지 파일 한도)가 바닥나기 직전이면 경고합니다. 한도를 넘으면 게임이 튕깁니다(5분에 한 번까지).",
+                null, 10);
+
+            _warnCommitPercent = Bind(WarningSection, WarningCategory, "Commit free below (%)", "커밋 여유 기준 (%)", 10,
+                "남은 커밋이 한도의 이 %보다 적거나 2GB 미만이면 경고합니다.",
+                new AcceptableValueRange<int>(3, 30), 9);
+
+            _warnVram = Bind(WarningSection, WarningCategory, "VRAM warning", "VRAM 포화 경고", true,
+                "그래픽카드 메모리(VRAM)가 아래 기준 이상인 상태가 계속되면 레이드마다 한 번 경고합니다. " +
+                "넘친 텍스처는 시스템 메모리로 가서 끊김 원인이 될 수 있습니다.",
+                null, 8);
+
+            _warnVramPercent = Bind(WarningSection, WarningCategory, "VRAM full at (%)", "VRAM 포화 기준 (%)", 95,
+                "VRAM 사용량이 그래픽카드 용량의 이 % 이상이면 '포화'로 봅니다.",
+                new AcceptableValueRange<int>(80, 100), 7);
+
+            _warnVramSeconds = Bind(WarningSection, WarningCategory, "VRAM full for (s)", "VRAM 포화 지속 시간 (초)", 120,
+                "포화 상태가 이 시간 넘게 이어져야 경고합니다(잠깐 차는 건 무시).",
+                new AcceptableValueRange<int>(10, 900), 6);
+
+            _warnNotify = Bind(WarningSection, WarningCategory, "In-game notification", "게임 알림으로 표시", true,
+                "경고를 게임 알림으로 띄웁니다. 끄면 로그와 F12 '현재 상태'에만 남습니다.",
+                null, 5);
         }
 
         private void BindLeakSettings()

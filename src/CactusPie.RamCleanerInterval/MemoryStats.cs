@@ -17,6 +17,11 @@ namespace CactusPie.RamCleanerInterval
         public long PrivateBytes;
         public long SystemTotal;
         public long SystemAvailable;
+
+        /// <summary>Commit limit (RAM + page file) and how much of it is still free. When this runs out,
+        /// allocations fail and the game crashes - it can happen with free RAM left if the page file is small.</summary>
+        public long CommitLimit;
+        public long CommitAvailable;
         public GarbageCollector.Mode GcMode;
 
         /// <summary>Everything the process committed that is not the Mono heap: Unity objects, textures,
@@ -142,6 +147,8 @@ namespace CactusPie.RamCleanerInterval
                 {
                     snapshot.SystemTotal = (long)status.ullTotalPhys;
                     snapshot.SystemAvailable = (long)status.ullAvailPhys;
+                    snapshot.CommitLimit = (long)status.ullTotalPageFile;
+                    snapshot.CommitAvailable = (long)status.ullAvailPageFile;
                 }
             }
             catch (Exception)

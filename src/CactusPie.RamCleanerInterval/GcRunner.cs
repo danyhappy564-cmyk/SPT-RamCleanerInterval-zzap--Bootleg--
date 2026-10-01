@@ -54,6 +54,18 @@ namespace CactusPie.RamCleanerInterval
 
         public float LastFinishTime { get; private set; } = -1f;
 
+        /// <summary>Mono "used" bytes when the last finished collection started.</summary>
+        public long LastUsedBefore { get; private set; } = -1;
+
+        /// <summary>Longest single frame of the last finished collection (ms). For a blocking GC: the whole freeze.</summary>
+        public double LastMaxSliceMs { get; private set; }
+
+        /// <summary>Time spent inside CollectIncremental during the most recent Tick (ms), and the frame it ran on.
+        /// Lets the hitch detector tell "this long frame was our GC" from "something else".</summary>
+        public double LastTickMs { get; private set; }
+
+        public int LastTickFrame { get; private set; } = -1;
+
         /// <summary>Raised on the main thread when a collection ends (normally or aborted).</summary>
         public event Action Finished;
 
@@ -142,6 +154,8 @@ namespace CactusPie.RamCleanerInterval
 
             _slice.Stop();
             double ms = _slice.Elapsed.TotalMilliseconds;
+            LastTickMs = ms;
+            LastTickFrame = Time.frameCount;
             _frames++;
             _workMs += ms;
             if (ms > _maxSliceMs)
@@ -182,6 +196,8 @@ namespace CactusPie.RamCleanerInterval
             long usedAfter = MemoryStats.MonoUsed();
             float seconds = Time.realtimeSinceStartup - _startTime;
             LastUsedAfter = usedAfter;
+            LastUsedBefore = _usedBefore;
+            LastMaxSliceMs = _maxSliceMs;
             LastFinishTime = Time.realtimeSinceStartup;
 
             string status = abortReason == null ? "완료" : abortReason;
@@ -243,6 +259,10 @@ namespace CactusPie.RamCleanerInterval
             watch.Stop();
             long after = MemoryStats.MonoUsed();
             LastUsedAfter = after;
+            LastUsedBefore = before;
+            LastMaxSliceMs = watch.Elapsed.TotalMilliseconds;
+            LastTickMs = LastMaxSliceMs;
+            LastTickFrame = Time.frameCount;
             LastFinishTime = Time.realtimeSinceStartup;
             LastResult = $"{DateTime.Now:HH:mm:ss} 전체 GC(한 번에) — {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB, " +
                          $"게임 멈춤 {watch.Elapsed.TotalMilliseconds:0}ms";
