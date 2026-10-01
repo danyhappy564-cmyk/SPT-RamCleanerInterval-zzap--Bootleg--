@@ -35,6 +35,10 @@ namespace CactusPie.RamCleanerInterval
         private static readonly long[] s_allocStartStack = new long[MaxDepth];
         private static readonly long[] s_allocChildStack = new long[MaxDepth];
         private static Func<long> s_allocReader = () => 0;
+
+        // Per-frame self time, for "which mod caused this long frame". Swapped at the end of every frame.
+        private static readonly long[] s_frameTicks = new long[ModRegistry.MaxMods];
+        private static readonly long[] s_lastFrameTicks = new long[ModRegistry.MaxMods];
         private static int s_depth;
         private static int s_mainThreadId;
         private static volatile bool s_measuring;
@@ -366,8 +370,60 @@ namespace CactusPie.RamCleanerInterval
             if (s_methodMod.TryGetValue(__originalMethod, out int mod))
             {
                 s_selfTicks[mod] += Math.Max(0, self);
+                s_frameTicks[mod] += Math.Max(0, self);
                 s_selfAlloc[mod] += Math.Max(0, selfAllocated);
             }
+        }
+
+        // ------------------------------------------------------------------ per-frame attribution
+
+        /// <summary>Call at the very end of every frame (WaitForEndOfFrame): freezes this frame's per-mod times.</summary>
+        public void EndFrame()
+        {
+            int count = ModRegistry.Count;
+            if (count == 0)
+            {
+                return;
+            }
+
+            Array.Copy(s_frameTicks, s_lastFrameTicks, count);
+            Array.Clear(s_frameTicks, 0, count);
+        }
+
+        /// <summary>The mod that spent the most main-thread time in the last finished frame, and all mods' total (ms).</summary>
+        public bool LastFrameTop(out string mod, out float modMs, out float totalMs)
+        {
+            mod = null;
+            modMs = 0f;
+            totalMs = 0f;
+            if (!s_measuring)
+            {
+                return false;
+            }
+
+            double toMs = 1000.0 / Stopwatch.Frequency;
+            long best = 0;
+            int bestIndex = -1;
+            long total = 0;
+            for (int i = 0; i < ModRegistry.Count; i++)
+            {
+                long ticks = s_lastFrameTicks[i];
+                total += ticks;
+                if (ticks > best)
+                {
+                    best = ticks;
+                    bestIndex = i;
+                }
+            }
+
+            totalMs = (float)(total * toMs);
+            if (bestIndex >= 0)
+            {
+                mod = ModRegistry.Name(bestIndex);
+                modMs = (float)(best * toMs);
+            }
+
+            return true;
         }
 
         // ------------------------------------------------------------------ measuring windows

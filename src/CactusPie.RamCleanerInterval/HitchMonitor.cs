@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using BepInEx.Logging;
 using UnityEngine;
@@ -25,6 +27,19 @@ namespace CactusPie.RamCleanerInterval
         private bool _prevAssetUnload;
         private bool _prevTrimRunning;
 
+        public const string CauseRamCleaner = "RAM 클리너 (GC 등)";
+        public const string CauseSpawn = "봇 스폰";
+        public const string CauseGame = "게임 자체 / 측정 밖";
+
+        private sealed class CauseStats
+        {
+            public int Count;
+            public float MaxMs;
+            public double TotalMs;
+        }
+
+        private readonly Dictionary<string, CauseStats> _causes = new Dictionary<string, CauseStats>();
+
         private float _lastLogTime = float.NegativeInfinity;
         private int _suppressed;
 
@@ -45,6 +60,19 @@ namespace CactusPie.RamCleanerInterval
 
         public string LastText { get; private set; } = "아직 없음";
 
+        /// <summary>A cause (mod, spawn, RAM cleaner) behind >= 30% of this raid's long frames and >= 3 of them; null otherwise.</summary>
+        public string Suspect { get; private set; }
+
+        /// <summary>Causes of this raid's long frames: (name, count, worst ms), most frequent first.</summary>
+        public List<KeyValuePair<string, KeyValuePair<int, float>>> Causes()
+        {
+            return _causes
+                .OrderByDescending(kv => kv.Value.Count)
+                .ThenByDescending(kv => kv.Value.MaxMs)
+                .Select(kv => new KeyValuePair<string, KeyValuePair<int, float>>(kv.Key, new KeyValuePair<int, float>(kv.Value.Count, kv.Value.MaxMs)))
+                .ToList();
+        }
+
         public void Reset()
         {
             Count = 0;
@@ -54,6 +82,8 @@ namespace CactusPie.RamCleanerInterval
             MaxWhat = "-";
             LastText = "아직 없음";
             _suppressed = 0;
+            _causes.Clear();
+            Suspect = null;
             Clear();
         }
 
@@ -78,7 +108,7 @@ namespace CactusPie.RamCleanerInterval
         }
 
         /// <summary>Call at the start of Update, after the Note* calls for the previous frame.</summary>
-        public void Check(bool active, float thresholdMs, System.Func<string> context)
+        public void Check(bool active, float thresholdMs, System.Func<string> context, ModCostProfiler profiler, bool spawnRecent)
         {
             float frameMs = Time.unscaledDeltaTime * 1000f;
             if (!active || !Application.isFocused || frameMs < thresholdMs)
@@ -87,7 +117,7 @@ namespace CactusPie.RamCleanerInterval
                 return;
             }
 
-            Judge(frameMs, thresholdMs, context);
+            Judge(frameMs, thresholdMs, context, profiler, spawnRecent);
             Clear();
         }
 
@@ -97,10 +127,47 @@ namespace CactusPie.RamCleanerInterval
             _prevAssetUnload = _prevTrimRunning = false;
         }
 
-        private void Judge(float frameMs, float thresholdMs, System.Func<string> context)
+        private void Judge(float frameMs, float thresholdMs, System.Func<string> context, ModCostProfiler profiler, bool spawnRecent)
         {
+            // Which mod spent the most time in that frame (needs the profiler measuring every frame).
+            string topMod = null;
+            float topMs = 0f;
+            float modsMs = 0f;
+            bool attributed = profiler != null && profiler.LastFrameTop(out topMod, out topMs, out modsMs);
+
 
             string ours = DescribeOurs(out bool isOurs);
+
+            // Cause: our own work first (we know it exactly), then a mod that took a big share of the frame,
+            // then a bot spawn in the last second, else the game itself (rendering, physics, loading, other threads).
+            string cause;
+            if (isOurs)
+            {
+                cause = CauseRamCleaner;
+            }
+            else if (attributed && topMod != null && topMs >= System.Math.Max(8f, frameMs * 0.3f))
+            {
+                cause = topMod;
+            }
+            else if (spawnRecent)
+            {
+                cause = CauseSpawn;
+            }
+            else
+            {
+                cause = CauseGame;
+            }
+
+            if (!_causes.TryGetValue(cause, out CauseStats stats))
+            {
+                stats = new CauseStats();
+                _causes[cause] = stats;
+            }
+
+            stats.Count++;
+            stats.TotalMs += frameMs;
+            stats.MaxMs = System.Math.Max(stats.MaxMs, frameMs);
+            UpdateSuspect();
             Count++;
             if (frameMs >= 100f)
             {
@@ -119,7 +186,7 @@ namespace CactusPie.RamCleanerInterval
             }
 
             float now = Time.realtimeSinceStartup;
-            LastText = $"{System.DateTime.Now:HH:mm:ss} {frameMs:0}ms — {(isOurs ? "RAM 클리너: " + ours : "RAM 클리너 아님")}";
+            LastText = $"{System.DateTime.Now:HH:mm:ss} {frameMs:0}ms — 원인: {cause}" + (isOurs ? $" ({ours})" : string.Empty);
 
             // Rate limit: a stutter storm (loading, alt-tab) must not flood the log.
             if (now - _lastLogTime < MinLogGapSeconds)
@@ -131,9 +198,26 @@ namespace CactusPie.RamCleanerInterval
             string extra = _suppressed > 0 ? $" (+{_suppressed} more long frames in the last moments)" : string.Empty;
             _suppressed = 0;
             _lastLogTime = now;
-            _log.LogInfo($"[hitch] {frameMs:0}ms frame (threshold {thresholdMs:0}) — " +
-                         (isOurs ? "RAM cleaner: " + DescribeOursEnglish() : "not RAM cleaner") +
-                         $" | {context()}{extra}");
+            string modPart = attributed && topMod != null
+                ? $" | mod code in that frame {modsMs:0}ms, top {topMod} {topMs:0}ms"
+                : attributed ? " | mod code in that frame ~0ms" : string.Empty;
+            _log.LogInfo($"[hitch] {frameMs:0}ms frame (threshold {thresholdMs:0}) — cause: {cause}" +
+                         (isOurs ? " (RAM cleaner: " + DescribeOursEnglish() + ")" : string.Empty) +
+                         $"{modPart} | {context()}{extra}");
+        }
+
+        private void UpdateSuspect()
+        {
+            Suspect = null;
+            int total = _causes.Values.Sum(c => c.Count);
+            KeyValuePair<string, CauseStats> top = _causes
+                .Where(kv => kv.Key != CauseGame)
+                .OrderByDescending(kv => kv.Value.Count)
+                .FirstOrDefault();
+            if (top.Key != null && top.Value.Count >= 3 && top.Value.Count >= total * 0.3f)
+            {
+                Suspect = $"{top.Key} — 끊김 {total}회 중 {top.Value.Count}회의 원인 (최대 {top.Value.MaxMs:0}ms)";
+            }
         }
 
         private string DescribeOurs(out bool isOurs)

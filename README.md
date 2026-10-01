@@ -18,6 +18,14 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 변경 이력
 
+- 2026-10-02 08:53 (KST) — **v2.7.0: 끊김 원인(모드)도 화면 막대 + 빨간 글씨로 표시**
+  - **끊김 원인 모드 추적 (07번, 기본 켬):** 레이드 내내 모드별 시간을 재고, 프레임이 끝날 때마다 그 프레임의 모드별 시간을 저장.
+    끊긴 프레임이 나오면 원인을 하나로 정함 — ① RAM 클리너 작업(GC 등) ② 그 프레임 시간의 30% 이상(최소 8ms)을 쓴 모드
+    ③ 직전 1초 안의 봇 스폰 ④ 게임 자체(렌더링·물리·로딩 등 모드 코드 밖)
+  - 이번 레이드 끊김을 원인별 횟수·최대 ms로 집계. 한 원인이 끊김의 30% 이상(3회 이상)이면 **"끊김 의심: 모드명 — 끊김 N회 중 M회의 원인"**
+    을 화면·F12·로그(`[hitch suspect]`)·게임 알림(레이드당 1회)·레이드 결산에 표시
+  - `[hitch]` 로그 줄에 원인과 "그 프레임 모드 코드 합계 / 1위 모드 ms" 추가
+  - 화면 표시에 **끊김 원인 막대**(보라, 회색=게임 자체, 빨강=의심) 추가. 이 추적을 켜면 10번 측정이 상시 측정이 됨(보통 프레임당 0.1~0.5ms 추가)
 - 2026-10-02 08:50 (KST) — **v2.6.0: 메모리 누수 의심도 화면 막대 + 빨간 글씨로 표시**
   - **모드별 메모리 생성량:** 10번 모드별 부하 측정 때 같이 "각 모드 코드가 만든 관리 메모리(MB/분)"를 잼
     (A 모드 안에서 불린 B 모드 몫은 A에서 뺌). 레이드 중엔 게임이 GC를 꺼 둬서 이게 곧 메모리 증가량
@@ -131,7 +139,7 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 설치
 
-1. `release\RamCleanerInterval-2.6.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
+1. `release\RamCleanerInterval-2.7.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
    `BepInEx\plugins\CactusPie.RamCleanerInterval\CactusPie.RamCleanerInterval.dll`로 들어갑니다.
 2. **예전 버전 DLL이 `BepInEx\plugins\`에 있으면 지우세요.**
 3. **SPTVRAMCleaner를 쓰고 있었다면 빼세요.** 이 모드에 같은 기능(개선판)이 들어 있어서, 둘 다 있으면 레이드 시작 때 두 번 정리합니다.
@@ -189,6 +197,7 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 | 화면 표시: FPS 줄 | 켬 | 현재 FPS · 레이드 평균 · 1% 저점 · 끊김 횟수 |
 | 화면 표시: 모드별 부하 막대 | 켬 | 10번 측정 결과 막대 + 의심 모드 |
 | 화면 표시: 메모리 의심 막대 | 켬 | 모드별 메모리 생성량(MB/분) 막대 + 13번 판정 결과 |
+| 화면 표시: 끊김 원인 막대 | 켬 | 이번 레이드 끊김의 원인별 횟수 막대 + 끊김 의심 |
 | 화면 표시: 막대 개수 | 5 | |
 | 로그 기록 간격 (초, 0=끔) | 60 | 레이드 중 `BepInEx\LogOutput.log`에 메모리 상태를 한 줄씩 기록 |
 
@@ -207,6 +216,11 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 |---|---|---|
 | 끊김 감지기 켜기 | 켬 | 기준보다 오래 걸린 프레임을 로그 `[hitch]`에 기록하고, 이 모드 탓인지 표시. 기록만 하므로 게임 동작에는 영향 없음 |
 | 끊김 기준 (ms) | 50 | 60fps 한 프레임 ≈ 16ms. 레이드 시작 후 5초, 게임 창이 비활성일 때는 기록 안 함 |
+| 끊김 원인 모드 추적 (상시 측정) | 켬 | 끊긴 프레임마다 원인(모드 / RAM 클리너 / 봇 스폰 / 게임 자체) 기록. 10번이 켜져 있어야 함 |
+| 끊김 의심 게임 알림 | 켬 | 한 원인이 끊김의 30% 이상(3회 이상)이면 레이드당 한 번 |
+
+**읽는 법:** "게임 자체 / 측정 밖"이 대부분이면 모드 코드가 아니라 렌더링(그래픽 설정·VRAM 포화), 물리, 에셋 로딩 쪽입니다.
+특정 모드가 반복해서 원인으로 잡히면 그 모드 설정을 낮추거나 빼서 비교해 보세요.
 
 ### 08. 레이드 결산 리포트
 
@@ -293,8 +307,8 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 | `GC done ... max slice Nms at frame X/Y` | 자동 GC 결과. 긴 프레임은 마지막 1개(약 50ms)가 정상 |
 | `Working set trim ... background call Nms` | RAM 부족 비상 정리. 별도 스레드라 이 시간 동안 게임이 멈추지 않음 |
 | `[leak] ...` | 누수 추적을 켰을 때만. 무엇이 늘었는지(종류·이름·위치) |
-| `[hitch] 87ms frame ... — RAM cleaner: GC slice 52ms` | 끊김 중 **이 모드 탓**인 것 (어떤 작업이었는지 표시) |
-| `[hitch] 120ms frame ... — not RAM cleaner` | 끊김이지만 **다른 원인** (다른 모드·게임 자체) |
+| `[hitch] 87ms frame ... — cause: SAIN \| mod code in that frame 61ms, top SAIN 55ms` | 끊긴 프레임과 그 원인(모드 / RAM 클리너 / 봇 스폰 / 게임 자체) |
+| `[hitch suspect] ...` | 이번 레이드 끊김의 30% 이상을 차지한 원인 |
 | `[raid report] ...` | 레이드 결산 한 줄 |
 | `[mods] 15s window ... SUSPECT: ...` | 모드별 부하 측정 결과 (모드별 프레임당 ms, 의심 모드) + `managed allocations MB/min` (모드별 메모리 생성) |
 | `[mem suspect] ...` | 메모리 누수 의심 (모드 생성량 / GC 뒤 남는 양 / 사망당 메모리 / 오브젝트 증가) |
@@ -305,7 +319,7 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 ## 직접 빌드
 
 - 루트의 `build.bat` 더블클릭 → Release 빌드, `E:\SPT 4.1\BepInEx\plugins\CactusPie.RamCleanerInterval\`로 자동 복사,
-  `release\RamCleanerInterval-2.6.0-SPT4.1.zip` 생성.
+  `release\RamCleanerInterval-2.7.0-SPT4.1.zip` 생성.
 - SPT 경로가 다르면 `src\RamCleaner.local.props.example`을 `src\RamCleaner.local.props`로 복사해서 경로를 고치세요.
 - 필요한 것: .NET SDK 8 이상. 참조는 SPT 설치 폴더의 `EscapeFromTarkov_Data\Managed`와 `BepInEx\core`에서 가져옵니다
   (`spt-reflection`은 쓰지 않습니다. `0Harmony`는 BepInEx\core의 것을 참조하며, 모드별 부하 분석이 다른 모드 함수에 측정 장치를 붙일 때만 씁니다 — 게임 동작은 바꾸지 않습니다).
@@ -320,7 +334,7 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 | `CombatTracker.cs` | "지금 정리해도 되나" 판단 — 플레이어가 쏘거나(`OnShot`) 맞거나(`BeingHitAction`) 조준 중인지, 인벤토리가 열렸는지(`OnInventoryOpened`) |
 | `VramMonitor.cs` | 이 게임의 VRAM 사용량 측정 (윈도우 성능 카운터, 백그라운드 스레드) |
 | `LeakTracker.cs` | 누수 추적(진단용): 오브젝트를 종류·이름·최상위 부모별로 세서 늘어난 것을 로그에 남김 |
-| `HitchMonitor.cs` | 끊김 감지기: 긴 프레임 기록 + 그 프레임에 이 모드가 한 일 표시 |
+| `HitchMonitor.cs` | 끊김 감지기: 긴 프레임 기록, 원인(모드 / RAM 클리너 / 봇 스폰 / 게임 자체) 판정·집계, 끊김 의심 |
 | `RaidReport.cs` | 레이드 결산: 한 판 동안의 최고치·횟수를 모아 끝날 때 요약 |
 | `MemoryWarnings.cs` | 메모리 위험 경고: 커밋 한도 임박, VRAM 포화 |
 | `ModRegistry.cs` | 불러온 DLL → 모드 이름 매핑, 모드 목록 지문(버전 + DLL 수정 시각) |

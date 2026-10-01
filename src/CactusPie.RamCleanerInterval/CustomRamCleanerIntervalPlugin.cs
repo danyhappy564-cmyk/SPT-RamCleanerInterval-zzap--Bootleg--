@@ -14,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.6.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.7.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -72,6 +72,11 @@ namespace CactusPie.RamCleanerInterval
         private readonly List<KeyValuePair<string, float>> _overlayMemBars = new List<KeyValuePair<string, float>>();
         private readonly List<string> _overlayMemBarLabels = new List<string>();
         private string _memTitle = string.Empty;
+        private readonly List<KeyValuePair<string, KeyValuePair<int, float>>> _overlayHitchBars = new List<KeyValuePair<string, KeyValuePair<int, float>>>();
+        private readonly List<string> _overlayHitchLabels = new List<string>();
+        private string _hitchTitle = string.Empty;
+        private bool _hitchSuspectNotified;
+        private readonly WaitForEndOfFrame _endOfFrame = new WaitForEndOfFrame();
         private string _lastMemSuspectKey = string.Empty;
         private readonly HashSet<string> _memNotifiedThisRaid = new HashSet<string>();
         private string _overlayWidthFor;
@@ -150,6 +155,7 @@ namespace CactusPie.RamCleanerInterval
                                   (_profiler.Measuring ? ", mod profiler measuring" : string.Empty);
 
             BindSettings();
+            StartCoroutine(EndOfFrameLoop());
             _unloadAuto.SettingChanged += (_, __) => s_autoUnloadUselessThisSession = false;
 
             GarbageCollector.GCModeChanged += OnGcModeChanged;
@@ -220,6 +226,7 @@ namespace CactusPie.RamCleanerInterval
 
             EvaluateWarnings(now);
             EvaluateMemorySuspects();
+            EvaluateHitchSuspect();
             bool autoActive = _inGame || !_onlyInRaid.Value;
 
             if (_inGame)
@@ -319,7 +326,8 @@ namespace CactusPie.RamCleanerInterval
             _memNotifiedThisRaid.Clear();
             _lastMemSuspectKey = string.Empty;
             _objects.Reset();
-            _profilerNext = now + 60f;
+            _profilerNext = HitchModTrackingOn ? now : now + 60f;
+            _hitchSuspectNotified = false;
             _objectsNext = now + 60f;
             _objectsPendingSince = -1f;
             try
@@ -718,7 +726,8 @@ namespace CactusPie.RamCleanerInterval
 
             // Skip the first seconds after the countdown: spawn waves and streaming make those frames noisy.
             bool active = _hitchEnabled.Value && _inGame && _raidStartedAt >= 0f && now - _raidStartedAt > 5f;
-            _hitch.Check(active, _hitchThresholdMs.Value, _hitchContext);
+            _hitch.Check(active, _hitchThresholdMs.Value, _hitchContext, HitchModTrackingOn ? _profiler : null,
+                Time.realtimeSinceStartup - _lastSpawnTime < 1.5f);
         }
 
         // ---------------------------------------------------------------- Mod profiler / mod objects / FPS history
@@ -761,7 +770,8 @@ namespace CactusPie.RamCleanerInterval
                 }
 
                 _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f, _allocSuspectMbPerMin.Value);
-                _profilerNext = _profilerContinuous.Value ? now : now + _profilerIntervalMin.Value * 60f;
+                // Hitch cause tracking needs per-frame mod times all raid long, so it implies continuous measuring.
+                _profilerNext = _profilerContinuous.Value || HitchModTrackingOn ? now : now + _profilerIntervalMin.Value * 60f;
             }
 
             if (now >= _profilerNext)
@@ -832,6 +842,34 @@ namespace CactusPie.RamCleanerInterval
         }
 
 
+        /// <summary>Freezes each frame's per-mod times right after the frame (rendering and OnGUI included) ends.</summary>
+        private System.Collections.IEnumerator EndOfFrameLoop()
+        {
+            while (true)
+            {
+                yield return _endOfFrame;
+                _profiler.EndFrame();
+            }
+        }
+
+        private bool HitchModTrackingOn => _hitchEnabled.Value && _hitchModTracking.Value && _profilerEnabled.Value;
+
+        private void EvaluateHitchSuspect()
+        {
+            if (_hitch.Suspect == null || _hitchSuspectNotified || !_hitchEnabled.Value)
+            {
+                return;
+            }
+
+            _hitchSuspectNotified = true;
+            Logger.LogWarning($"[hitch suspect] {_hitch.Suspect}");
+            if (_hitchNotify.Value)
+            {
+                _report.AddWarning();
+                Notify("끊김 의심: " + _hitch.Suspect, true);
+            }
+        }
+
         private void FinishRaidReport()
         {
             if (!_report.Active)
@@ -839,7 +877,7 @@ namespace CactusPie.RamCleanerInterval
                 return;
             }
 
-            _report.End(_hitch, _frames.AverageFps, _frames.OnePercentLowFps(), _profiler.Suspect ?? (_memSuspects.Count > 0 ? _memSuspects[0] : null),
+            _report.End(_hitch, _frames.AverageFps, _frames.OnePercentLowFps(), _profiler.Suspect ?? _hitch.Suspect ?? (_memSuspects.Count > 0 ? _memSuspects[0] : null),
                 out string logLine, out string notification);
             _lastReport = _report.LastSummaryKorean;
             if (!_reportEnabled.Value)
@@ -1292,6 +1330,28 @@ namespace CactusPie.RamCleanerInterval
             {
                 sb.Append("끊김(이번 레이드): ").Append(_hitch.Count).Append("회, 그중 이 모드 ").Append(_hitch.Ours)
                   .Append("회, 최대 ").Append(_hitch.MaxMs.ToString("0")).Append("ms · 마지막: ").Append(_hitch.LastText).Append('\n');
+                List<KeyValuePair<string, KeyValuePair<int, float>>> causes = _hitch.Causes();
+                if (causes.Count > 0)
+                {
+                    sb.Append("  끊김 원인: ");
+                    for (int i = 0; i < Math.Min(6, causes.Count); i++)
+                    {
+                        if (i > 0)
+                        {
+                            sb.Append(", ");
+                        }
+
+                        sb.Append(causes[i].Key).Append(' ').Append(causes[i].Value.Key).Append("회(최대 ")
+                          .Append(causes[i].Value.Value.ToString("0")).Append("ms)");
+                    }
+
+                    sb.Append('\n');
+                }
+
+                if (_hitch.Suspect != null)
+                {
+                    sb.Append("-> 끊김 의심: ").Append(_hitch.Suspect).Append('\n');
+                }
             }
 
             if (_warnEnabled.Value)
@@ -1392,6 +1452,31 @@ namespace CactusPie.RamCleanerInterval
 
             _suspectText = _profiler.Suspect != null ? "프레임 의심: " + _profiler.Suspect : null;
             BuildOverlayMemory(now);
+            BuildOverlayHitches();
+        }
+
+        private void BuildOverlayHitches()
+        {
+            _overlayHitchBars.Clear();
+            _overlayHitchLabels.Clear();
+            _hitchTitle = string.Empty;
+            if (!_overlayHitch.Value || !_hitchEnabled.Value || !_inGame || _hitch.Count == 0)
+            {
+                return;
+            }
+
+            _hitchTitle = $"끊김 원인 (이번 레이드 {_hitch.Count}회, {_hitchThresholdMs.Value}ms 이상)" +
+                          (HitchModTrackingOn ? string.Empty : " · 모드 추적 꺼짐");
+            foreach (KeyValuePair<string, KeyValuePair<int, float>> cause in _hitch.Causes())
+            {
+                if (_overlayHitchBars.Count >= _overlayModCount.Value)
+                {
+                    break;
+                }
+
+                _overlayHitchBars.Add(cause);
+                _overlayHitchLabels.Add($"{cause.Value.Key}회 · 최대 {cause.Value.Value:0}ms");
+            }
         }
 
         private void BuildOverlayMemory(float now)
@@ -1486,7 +1571,8 @@ namespace CactusPie.RamCleanerInterval
             float width = Mathf.Max(nameWidth + barWidth + valueWidth + 16f, _overlayTextWidth + 12f);
 
             int lines = 1 + (_fpsText.Length > 0 ? 1 : 0) + (_modTitle.Length > 0 ? 1 + _overlayBars.Count : 0) + (_suspectText != null ? 1 : 0) +
-                        (_memTitle.Length > 0 ? 1 + _overlayMemBars.Count : 0) + (_overlayMem.Value ? _memSuspects.Count : 0);
+                        (_memTitle.Length > 0 ? 1 + _overlayMemBars.Count : 0) + (_overlayMem.Value ? _memSuspects.Count : 0) +
+                        (_hitchTitle.Length > 0 ? 1 + _overlayHitchBars.Count + (_hitch.Suspect != null ? 1 : 0) : 0);
             GUI.Box(new Rect(x, 6f, width, lines * lineHeight + 8f), GUIContent.none, _overlayStyle);
 
             float y = 10f;
@@ -1573,6 +1659,40 @@ namespace CactusPie.RamCleanerInterval
                 for (int i = 0; i < _memSuspects.Count; i++)
                 {
                     DrawRedLine(x, ref y, width, lineHeight, _memSuspects[i]);
+                }
+            }
+
+            if (_hitchTitle.Length > 0)
+            {
+                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _hitchTitle, _overlayLabelStyle);
+                y += lineHeight;
+                int most = 1;
+                for (int i = 0; i < _overlayHitchBars.Count; i++)
+                {
+                    most = Math.Max(most, _overlayHitchBars[i].Value.Key);
+                }
+
+                Color previous = GUI.color;
+                for (int i = 0; i < _overlayHitchBars.Count; i++)
+                {
+                    KeyValuePair<string, KeyValuePair<int, float>> bar = _overlayHitchBars[i];
+                    bool suspect = _hitch.Suspect != null && _hitch.Suspect.StartsWith(bar.Key, StringComparison.Ordinal);
+                    bool game = bar.Key == HitchMonitor.CauseGame;
+                    GUI.color = Color.white;
+                    GUI.Label(new Rect(x + 6f, y, nameWidth, lineHeight), bar.Key, _overlayLabelStyle);
+                    GUI.color = new Color(1f, 1f, 1f, 0.15f);
+                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth, lineHeight - 8f), Texture2D.whiteTexture);
+                    GUI.color = suspect ? new Color(0.95f, 0.25f, 0.2f) : game ? new Color(0.6f, 0.6f, 0.6f) : new Color(0.75f, 0.5f, 0.95f);
+                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth * Mathf.Clamp01(bar.Value.Key / (float)most), lineHeight - 8f), Texture2D.whiteTexture);
+                    GUI.color = Color.white;
+                    GUI.Label(new Rect(x + 10f + nameWidth + barWidth, y, valueWidth + 60f, lineHeight), _overlayHitchLabels[i], _overlayLabelStyle);
+                    y += lineHeight;
+                }
+
+                GUI.color = previous;
+                if (_hitch.Suspect != null)
+                {
+                    DrawRedLine(x, ref y, width, lineHeight, "끊김 의심: " + _hitch.Suspect);
                 }
             }
         }

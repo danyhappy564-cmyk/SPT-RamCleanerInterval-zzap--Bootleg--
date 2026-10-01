@@ -70,6 +70,9 @@ namespace CactusPie.RamCleanerInterval
 
         private ConfigEntry<bool> _hitchEnabled;
         private ConfigEntry<int> _hitchThresholdMs;
+        private ConfigEntry<bool> _hitchModTracking;
+        private ConfigEntry<bool> _hitchNotify;
+        private ConfigEntry<bool> _overlayHitch;
         private ConfigEntry<bool> _reportEnabled;
         private ConfigEntry<bool> _reportNotify;
         private ConfigEntry<bool> _warnEnabled;
@@ -160,6 +163,16 @@ namespace CactusPie.RamCleanerInterval
             _hitchThresholdMs = Bind(HitchSection, HitchCategory, "Threshold (ms)", "끊김 기준 (ms)", 50,
                 "이보다 오래 걸린 프레임만 기록합니다. 참고: 60fps 한 프레임은 약 16ms, 50ms면 눈에 띄는 끊김입니다.",
                 new AcceptableValueRange<int>(20, 1000), 9);
+
+            _hitchModTracking = Bind(HitchSection, HitchCategory, "Track mod causes", "끊김 원인 모드 추적 (상시 측정)", true,
+                "레이드 내내 모드별 시간을 재서, 끊긴 프레임마다 그 프레임에서 가장 오래 걸린 모드를 원인으로 기록합니다. " +
+                "원인은 모드명 / RAM 클리너 / 봇 스폰 / 게임 자체(렌더링·물리·로딩 등 모드 코드 밖) 중 하나. " +
+                "'10. 모드별 부하 분석'이 켜져 있어야 하고, 켜면 그쪽도 상시 측정이 됩니다(보통 프레임당 0.1~0.5ms 추가).",
+                null, 8);
+
+            _hitchNotify = Bind(HitchSection, HitchCategory, "Suspect notification", "끊김 의심 게임 알림", true,
+                "한 원인이 이번 레이드 끊김의 30% 이상(3회 이상)이면 레이드당 한 번 게임 알림으로 알려 줍니다.",
+                null, 7);
         }
 
         private void BindReportSettings()
@@ -432,6 +445,10 @@ namespace CactusPie.RamCleanerInterval
 
             _overlayMem = Bind(GeneralSection, GeneralCategory, "Overlay memory bars", "화면 표시: 메모리 의심 막대", true,
                 "그 밑에 모드별 메모리 생성량(MB/분) 막대와 '13. 메모리 누수 의심 판정' 결과를 빨간 글씨로 표시합니다.",
+                null, 7);
+
+            _overlayHitch = Bind(GeneralSection, GeneralCategory, "Overlay hitch bars", "화면 표시: 끊김 원인 막대", true,
+                "그 밑에 이번 레이드 끊김의 원인별 횟수 막대(보라, 회색=게임 자체, 빨강=의심)와 끊김 의심 문구를 표시합니다.",
                 null, 7);
 
             _overlayModCount = Bind(GeneralSection, GeneralCategory, "Overlay mod bar count", "화면 표시: 막대 개수", 5,
