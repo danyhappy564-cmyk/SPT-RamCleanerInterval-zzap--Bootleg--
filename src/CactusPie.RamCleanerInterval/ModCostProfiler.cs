@@ -31,6 +31,10 @@ namespace CactusPie.RamCleanerInterval
         private static readonly long[] s_selfTicks = new long[ModRegistry.MaxMods];
         private static readonly long[] s_startStack = new long[MaxDepth];
         private static readonly long[] s_childStack = new long[MaxDepth];
+        private static readonly long[] s_selfAlloc = new long[ModRegistry.MaxMods];
+        private static readonly long[] s_allocStartStack = new long[MaxDepth];
+        private static readonly long[] s_allocChildStack = new long[MaxDepth];
+        private static Func<long> s_allocReader = () => 0;
         private static int s_depth;
         private static int s_mainThreadId;
         private static volatile bool s_measuring;
@@ -43,6 +47,7 @@ namespace CactusPie.RamCleanerInterval
         private int _windowFrames;
         private float _windowStart;
         private float[] _firstWindowMs;
+        private float[] _firstWindowAlloc;
 
         public ModCostProfiler(ManualLogSource log)
         {
@@ -74,6 +79,16 @@ namespace CactusPie.RamCleanerInterval
 
         public string LastSummary { get; private set; } = "아직 측정 안 함";
 
+        /// <summary>Last window: managed memory each mod's code allocated, MB per minute, highest first.</summary>
+        public List<KeyValuePair<string, float>> LastAlloc { get; private set; } = new List<KeyValuePair<string, float>>();
+
+        public float LastAllocTotal { get; private set; }
+
+        public string AllocSuspect { get; private set; }
+
+        /// <summary>Which counter the allocation numbers come from (exact per-thread counter, or heap-size deltas).</summary>
+        public string AllocMethod { get; private set; } = "?";
+
         // ------------------------------------------------------------------ install
 
         /// <summary>Collects what to wrap. Call in the main menu; then call <see cref="InstallStep"/> every frame.</summary>
@@ -99,6 +114,7 @@ namespace CactusPie.RamCleanerInterval
                 _log.LogError($"Profiler: collecting methods failed: {ex}");
             }
 
+            DetectAllocReader();
             _toPatch = new Queue<KeyValuePair<MethodBase, int>>(targets);
             _harmony = new Harmony(HarmonyId);
             _log.LogInfo($"Profiler: wrapping {targets.Count} mod methods across {ModRegistry.Count} mods (in the menu, spread over frames)");
@@ -138,6 +154,50 @@ namespace CactusPie.RamCleanerInterval
             Status = State.Ready;
             _log.LogInfo($"Profiler: ready, {_patched} methods wrapped ({_failed} skipped)");
             return true;
+        }
+
+        /// <summary>
+        /// Picks how to read "bytes allocated so far". GC.GetAllocatedBytesForCurrentThread is exact but may be
+        /// missing or return 0 on Unity's Boehm GC; then fall back to the used-heap size, which only moves in
+        /// heap-block steps but, summed over thousands of calls, still attributes allocations to the right mods
+        /// (the GC is off during raids, so the heap only grows while mods run).
+        /// </summary>
+        private void DetectAllocReader()
+        {
+            try
+            {
+                if (TestPerThreadCounter())
+                {
+                    s_allocReader = ReadPerThread;
+                    AllocMethod = "per-thread counter";
+                    _log.LogInfo("Profiler: allocations measured with GC.GetAllocatedBytesForCurrentThread");
+                    return;
+                }
+            }
+            catch (Exception)
+            {
+                // missing in this runtime
+            }
+
+            s_allocReader = () => GC.GetTotalMemory(false);
+            AllocMethod = "heap size";
+            _log.LogInfo("Profiler: allocations measured from heap-size deltas (approximate, block-sized steps)");
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static bool TestPerThreadCounter()
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            byte[] probe = new byte[64 * 1024];
+            long after = GC.GetAllocatedBytesForCurrentThread();
+            GC.KeepAlive(probe);
+            return after - before >= 60 * 1024;
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static long ReadPerThread()
+        {
+            return GC.GetAllocatedBytesForCurrentThread();
         }
 
         private static void CollectHarmonyPatches(Dictionary<MethodBase, int> targets)
@@ -275,6 +335,8 @@ namespace CactusPie.RamCleanerInterval
                 return;
             }
 
+            s_allocStartStack[s_depth] = s_allocReader();
+            s_allocChildStack[s_depth] = 0;
             long now = Stopwatch.GetTimestamp();
             s_startStack[s_depth] = now;
             s_childStack[s_depth] = 0;
@@ -293,14 +355,18 @@ namespace CactusPie.RamCleanerInterval
             s_depth--;
             long elapsed = now - s_startStack[s_depth];
             long self = elapsed - s_childStack[s_depth];
+            long allocated = Math.Max(0, s_allocReader() - s_allocStartStack[s_depth]);
+            long selfAllocated = allocated - s_allocChildStack[s_depth];
             if (s_depth > 0)
             {
                 s_childStack[s_depth - 1] += elapsed;
+                s_allocChildStack[s_depth - 1] += allocated;
             }
 
             if (s_methodMod.TryGetValue(__originalMethod, out int mod))
             {
                 s_selfTicks[mod] += Math.Max(0, self);
+                s_selfAlloc[mod] += Math.Max(0, selfAllocated);
             }
         }
 
@@ -309,7 +375,9 @@ namespace CactusPie.RamCleanerInterval
         public void ResetRaid()
         {
             _firstWindowMs = null;
+            _firstWindowAlloc = null;
             Suspect = null;
+            AllocSuspect = null;
         }
 
         public void StartWindow()
@@ -320,6 +388,7 @@ namespace CactusPie.RamCleanerInterval
             }
 
             Array.Clear(s_selfTicks, 0, s_selfTicks.Length);
+            Array.Clear(s_selfAlloc, 0, s_selfAlloc.Length);
             s_depth = 0;
             _windowFrames = 0;
             _windowStart = Time.realtimeSinceStartup;
@@ -335,7 +404,7 @@ namespace CactusPie.RamCleanerInterval
             }
         }
 
-        public void StopWindow(float suspectMs, float suspectShare)
+        public void StopWindow(float suspectMs, float suspectShare, float allocSuspectMbPerMin = 50f)
         {
             if (!s_measuring)
             {
@@ -392,10 +461,55 @@ namespace CactusPie.RamCleanerInterval
                 }
             }
 
+            // Managed memory each mod allocated during the window, as MB per minute of play.
+            double toMbPerMin = 60.0 / seconds / (1024.0 * 1024.0);
+            var perModAlloc = new float[ModRegistry.Count];
+            var alloc = new List<KeyValuePair<string, float>>();
+            float allocTotal = 0f;
+            for (int i = 0; i < ModRegistry.Count; i++)
+            {
+                perModAlloc[i] = (float)(s_selfAlloc[i] * toMbPerMin);
+                allocTotal += perModAlloc[i];
+                if (perModAlloc[i] >= 0.1f)
+                {
+                    alloc.Add(new KeyValuePair<string, float>(ModRegistry.Name(i), perModAlloc[i]));
+                }
+            }
+
+            alloc.Sort((a, b) => b.Value.CompareTo(a.Value));
+            LastAlloc = alloc;
+            LastAllocTotal = allocTotal;
+            AllocSuspect = null;
+            if (alloc.Count > 0 && alloc[0].Value >= allocSuspectMbPerMin && alloc[0].Value >= allocTotal * 0.4f)
+            {
+                AllocSuspect = $"{alloc[0].Key} — 모드 코드가 만드는 메모리의 {alloc[0].Value / Math.Max(0.01f, allocTotal) * 100f:0}% ({alloc[0].Value:0}MB/분)";
+            }
+
+            if (_firstWindowAlloc == null)
+            {
+                _firstWindowAlloc = perModAlloc;
+            }
+            else
+            {
+                for (int i = 0; i < Math.Min(perModAlloc.Length, _firstWindowAlloc.Length); i++)
+                {
+                    float before = _firstWindowAlloc[i];
+                    if (perModAlloc[i] >= allocSuspectMbPerMin / 2f && perModAlloc[i] >= before * 2f && perModAlloc[i] - before >= allocSuspectMbPerMin / 2f)
+                    {
+                        string grow = $"{ModRegistry.Name(i)} — 메모리 생성 레이드 초반 {before:0}MB/분 → 지금 {perModAlloc[i]:0}MB/분 (점점 늘어남)";
+                        AllocSuspect = AllocSuspect == null ? grow : AllocSuspect + " / " + grow;
+                        break;
+                    }
+                }
+            }
+
             string top = string.Join(", ", result.Take(8).Select(kv => $"{kv.Key} {kv.Value:0.00}ms"));
+            string topAlloc = string.Join(", ", alloc.Take(8).Select(kv => $"{kv.Key} {kv.Value:0.0}"));
             _log.LogInfo($"[mods] {seconds:0}s window, {_windowFrames} frames, frame {LastFrameMs:0.0}ms ({1000f / LastFrameMs:0} fps) | " +
                          $"main-thread self time per frame: {(top.Length > 0 ? top : "(none measurable)")}" +
-                         (Suspect != null ? $" | SUSPECT: {Suspect}" : string.Empty));
+                         (Suspect != null ? $" | SUSPECT: {Suspect}" : string.Empty) +
+                         $" | managed allocations MB/min ({AllocMethod}, total {allocTotal:0}): {(topAlloc.Length > 0 ? topAlloc : "(none)")}" +
+                         (AllocSuspect != null ? $" | MEMORY SUSPECT: {AllocSuspect}" : string.Empty));
             LastSummary = $"{DateTime.Now:HH:mm:ss} 측정 — " + (Suspect != null ? "의심: " + Suspect : "뚜렷한 의심 모드 없음") +
                           (result.Count > 0 ? $" (1위 {result[0].Key} {result[0].Value:0.0}ms / 프레임 {LastFrameMs:0.0}ms)" : string.Empty);
         }

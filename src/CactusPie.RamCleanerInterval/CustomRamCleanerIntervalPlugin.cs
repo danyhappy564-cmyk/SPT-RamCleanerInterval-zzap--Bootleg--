@@ -14,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.5.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.6.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -65,6 +65,15 @@ namespace CactusPie.RamCleanerInterval
         private readonly List<KeyValuePair<string, float>> _overlayBars = new List<KeyValuePair<string, float>>();
         private readonly List<string> _overlayBarLabels = new List<string>();
         private GUIStyle _overlayLabelStyle;
+
+        // Memory suspects: managed memory still alive after each of our GCs (a rising floor = a real managed leak).
+        private readonly List<KeyValuePair<float, long>> _gcFloors = new List<KeyValuePair<float, long>>();
+        private readonly List<string> _memSuspects = new List<string>();
+        private readonly List<KeyValuePair<string, float>> _overlayMemBars = new List<KeyValuePair<string, float>>();
+        private readonly List<string> _overlayMemBarLabels = new List<string>();
+        private string _memTitle = string.Empty;
+        private string _lastMemSuspectKey = string.Empty;
+        private readonly HashSet<string> _memNotifiedThisRaid = new HashSet<string>();
         private string _overlayWidthFor;
         private float _overlayTextWidth;
         private float _leakNext = -1f;
@@ -210,6 +219,7 @@ namespace CactusPie.RamCleanerInterval
             }
 
             EvaluateWarnings(now);
+            EvaluateMemorySuspects();
             bool autoActive = _inGame || !_onlyInRaid.Value;
 
             if (_inGame)
@@ -271,7 +281,7 @@ namespace CactusPie.RamCleanerInterval
                 _gc.Abort(false, "레이드가 끝나서 중단");
                 _combat.Unbind();
                 Logger.LogInfo("Left raid");
-                _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f);
+                _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f, _allocSuspectMbPerMin.Value);
                 FinishRaidReport();
                 FinishFpsHistory();
             }
@@ -304,6 +314,10 @@ namespace CactusPie.RamCleanerInterval
             _warnings.ResetRaid();
             _frames.Reset();
             _profiler.ResetRaid();
+            _gcFloors.Clear();
+            _memSuspects.Clear();
+            _memNotifiedThisRaid.Clear();
+            _lastMemSuspectKey = string.Empty;
             _objects.Reset();
             _profilerNext = now + 60f;
             _objectsNext = now + 60f;
@@ -401,6 +415,10 @@ namespace CactusPie.RamCleanerInterval
             if (_inGame)
             {
                 _report.AddGc(_gc.LastUsedBefore - _gc.LastUsedAfter, _gc.LastMaxSliceMs);
+                if (_gc.LastUsedAfter > 0 && _raidStartedAt >= 0f)
+                {
+                    _gcFloors.Add(new KeyValuePair<float, long>(Time.realtimeSinceStartup, _gc.LastUsedAfter));
+                }
             }
 
             if (_assetPhase == AssetPhase.WaitingForGc)
@@ -729,7 +747,7 @@ namespace CactusPie.RamCleanerInterval
             {
                 if (_profiler.Measuring)
                 {
-                    _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f);
+                    _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f, _allocSuspectMbPerMin.Value);
                 }
 
                 return;
@@ -742,7 +760,7 @@ namespace CactusPie.RamCleanerInterval
                     return;
                 }
 
-                _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f);
+                _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f, _allocSuspectMbPerMin.Value);
                 _profilerNext = _profilerContinuous.Value ? now : now + _profilerIntervalMin.Value * 60f;
             }
 
@@ -821,7 +839,7 @@ namespace CactusPie.RamCleanerInterval
                 return;
             }
 
-            _report.End(_hitch, _frames.AverageFps, _frames.OnePercentLowFps(), _profiler.Suspect ?? _objects.Suspect,
+            _report.End(_hitch, _frames.AverageFps, _frames.OnePercentLowFps(), _profiler.Suspect ?? (_memSuspects.Count > 0 ? _memSuspects[0] : null),
                 out string logLine, out string notification);
             _lastReport = _report.LastSummaryKorean;
             if (!_reportEnabled.Value)
@@ -988,6 +1006,97 @@ namespace CactusPie.RamCleanerInterval
         }
 
         /// <summary>"+X MB per death" over the whole raid and over the last 10 deaths.</summary>
+        /// <summary>Recent memory per death in MB (last ~10 deaths, else the raid average); -1 if too few deaths.</summary>
+        private double RecentPerDeathMb()
+        {
+            int deaths = _dead - _deadAtStart;
+            if (_nativeAtStart < 0 || deaths < 5)
+            {
+                return -1;
+            }
+
+            for (int i = _deathSamples.Count - 1; i >= 0; i--)
+            {
+                if (_deathSamples[i].Key <= _dead - 10 && _dead > _deathSamples[i].Key)
+                {
+                    return (_snapshot.Native - _deathSamples[i].Value) / (1024d * 1024d) / (_dead - _deathSamples[i].Key);
+                }
+            }
+
+            return (_snapshot.Native - _nativeAtStart) / (1024d * 1024d) / deaths;
+        }
+
+        /// <summary>
+        /// How fast the managed memory left over after our GCs rises (MB/min). Garbage is gone after a GC, so a
+        /// floor that keeps climbing means something keeps references it should drop: a real managed leak.
+        /// Needs at least 3 GCs spread over 10+ minutes.
+        /// </summary>
+        private double GcFloorSlopeMbPerMin()
+        {
+            if (_gcFloors.Count < 3)
+            {
+                return double.NaN;
+            }
+
+            KeyValuePair<float, long> first = _gcFloors[0];
+            KeyValuePair<float, long> last = _gcFloors[_gcFloors.Count - 1];
+            float minutes = (last.Key - first.Key) / 60f;
+            return minutes < 10f ? double.NaN : (last.Value - first.Value) / (1024d * 1024d) / minutes;
+        }
+
+        /// <summary>Collects every memory suspect into _memSuspects (Korean, one line each). Called once per second.</summary>
+        private void EvaluateMemorySuspects()
+        {
+            _memSuspects.Clear();
+            if (!_inGame || !_memSuspectEnabled.Value)
+            {
+                return;
+            }
+
+            if (_profiler.AllocSuspect != null)
+            {
+                _memSuspects.Add("메모리 의심: " + _profiler.AllocSuspect);
+            }
+
+            double slope = GcFloorSlopeMbPerMin();
+            if (!double.IsNaN(slope) && slope >= _retainedSuspectMbPerMin.Value)
+            {
+                string top = _profiler.LastAlloc.Count > 0 ? $" — 메모리를 가장 많이 만드는 모드: {_profiler.LastAlloc[0].Key} ({_profiler.LastAlloc[0].Value:0}MB/분)" : string.Empty;
+                _memSuspects.Add($"관리 메모리 누수 의심: GC 뒤에도 분당 {slope:0}MB씩 남음{top}");
+            }
+
+            double perDeath = RecentPerDeathMb();
+            if (perDeath >= _perDeathSuspectMb.Value)
+            {
+                _memSuspects.Add($"봇 장비 메모리 과다: 사망 1명당 {perDeath:0}MB — 봇 스폰 모드(APBS 등)의 모드 아이템 종류를 줄여 보세요");
+            }
+
+            if (_objects.Suspect != null)
+            {
+                _memSuspects.Add("오브젝트 증가 의심: " + _objects.Suspect);
+            }
+
+            // Log/notify when the set of suspects changes, not when their numbers move (per-death MB changes every second).
+            string key = string.Join("|", _memSuspects.Select(line => line.Substring(0, Math.Min(6, line.Length)))) +
+                         "|" + _profiler.AllocSuspect + "|" + _objects.Suspect;
+            if (key == _lastMemSuspectKey)
+            {
+                return;
+            }
+
+            _lastMemSuspectKey = key;
+            foreach (string line in _memSuspects)
+            {
+                string kind = line.Substring(0, Math.Min(6, line.Length));
+                Logger.LogWarning($"[mem suspect] {line}");
+                if (_memSuspectNotify.Value && _memNotifiedThisRaid.Add(kind))
+                {
+                    _report.AddWarning();
+                    Notify(line, true);
+                }
+            }
+        }
+
         private string DescribePerDeath(bool korean)
         {
             int deaths = _dead - _deadAtStart;
@@ -1142,6 +1251,33 @@ namespace CactusPie.RamCleanerInterval
                 }
             }
 
+            if (_profilerEnabled.Value && _profiler.LastAlloc.Count > 0)
+            {
+                sb.Append("모드별 메모리 생성(MB/분, ").Append(_profiler.AllocMethod).Append("): ");
+                for (int i = 0; i < Math.Min(6, _profiler.LastAlloc.Count); i++)
+                {
+                    if (i > 0)
+                    {
+                        sb.Append(", ");
+                    }
+
+                    sb.Append(_profiler.LastAlloc[i].Key).Append(' ').Append(_profiler.LastAlloc[i].Value.ToString("0"));
+                }
+
+                sb.Append('\n');
+            }
+
+            double floorSlope = GcFloorSlopeMbPerMin();
+            if (!double.IsNaN(floorSlope))
+            {
+                sb.Append("GC 뒤에도 남는 관리 메모리: 분당 ").Append(floorSlope.ToString("+0;-0")).Append("MB (").Append(_gcFloors.Count).Append("회 기준)\n");
+            }
+
+            foreach (string suspectLine in _memSuspects)
+            {
+                sb.Append("-> ").Append(suspectLine).Append('\n');
+            }
+
             if (_objectsEnabled.Value)
             {
                 sb.Append("모드별 오브젝트: ").Append(_objects.LastSummary).Append('\n');
@@ -1254,8 +1390,35 @@ namespace CactusPie.RamCleanerInterval
                 _overlayBarLabels.Add($"{bar.Value:0.0}ms");
             }
 
-            string suspect = _profiler.Suspect ?? _objects.Suspect;
-            _suspectText = suspect != null ? "의심 모드: " + suspect : null;
+            _suspectText = _profiler.Suspect != null ? "프레임 의심: " + _profiler.Suspect : null;
+            BuildOverlayMemory(now);
+        }
+
+        private void BuildOverlayMemory(float now)
+        {
+            _overlayMemBars.Clear();
+            _overlayMemBarLabels.Clear();
+            _memTitle = string.Empty;
+            if (!IsOverlayMemoryOn())
+            {
+                return;
+            }
+
+            double slope = GcFloorSlopeMbPerMin();
+            double perDeath = RecentPerDeathMb();
+            _memTitle = "모드별 메모리 생성 (MB/분)" +
+                        (!double.IsNaN(slope) ? $" · GC 뒤 남는 양 {slope:+0;-0}MB/분" : string.Empty) +
+                        (perDeath >= 0 ? $" · 사망당 {perDeath:0}MB" : string.Empty);
+            for (int i = 0; i < Math.Min(_overlayModCount.Value, _profiler.LastAlloc.Count); i++)
+            {
+                _overlayMemBars.Add(_profiler.LastAlloc[i]);
+                _overlayMemBarLabels.Add($"{_profiler.LastAlloc[i].Value:0}MB/분");
+            }
+        }
+
+        private bool IsOverlayMemoryOn()
+        {
+            return _overlayMem.Value && _memSuspectEnabled.Value && _inGame;
         }
 
         private void ManualButtonsDrawer(ConfigEntryBase entry)
@@ -1322,7 +1485,8 @@ namespace CactusPie.RamCleanerInterval
 
             float width = Mathf.Max(nameWidth + barWidth + valueWidth + 16f, _overlayTextWidth + 12f);
 
-            int lines = 1 + (_fpsText.Length > 0 ? 1 : 0) + (_modTitle.Length > 0 ? 1 + _overlayBars.Count : 0) + (_suspectText != null ? 1 : 0);
+            int lines = 1 + (_fpsText.Length > 0 ? 1 : 0) + (_modTitle.Length > 0 ? 1 + _overlayBars.Count : 0) + (_suspectText != null ? 1 : 0) +
+                        (_memTitle.Length > 0 ? 1 + _overlayMemBars.Count : 0) + (_overlayMem.Value ? _memSuspects.Count : 0);
             GUI.Box(new Rect(x, 6f, width, lines * lineHeight + 8f), GUIContent.none, _overlayStyle);
 
             float y = 10f;
@@ -1371,11 +1535,55 @@ namespace CactusPie.RamCleanerInterval
 
             if (_suspectText != null)
             {
-                Color previous = _overlayLabelStyle.normal.textColor;
-                _overlayLabelStyle.normal.textColor = new Color(1f, 0.4f, 0.35f);
-                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _suspectText, _overlayLabelStyle);
-                _overlayLabelStyle.normal.textColor = previous;
+                DrawRedLine(x, ref y, width, lineHeight, _suspectText);
             }
+
+            if (_memTitle.Length > 0)
+            {
+                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _memTitle, _overlayLabelStyle);
+                y += lineHeight;
+                float scale = 50f;
+                for (int i = 0; i < _overlayMemBars.Count; i++)
+                {
+                    scale = Mathf.Max(scale, _overlayMemBars[i].Value);
+                }
+
+                float total = Mathf.Max(0.01f, _profiler.LastAllocTotal);
+                Color previous = GUI.color;
+                for (int i = 0; i < _overlayMemBars.Count; i++)
+                {
+                    KeyValuePair<string, float> bar = _overlayMemBars[i];
+                    bool suspect = _profiler.AllocSuspect != null && _profiler.AllocSuspect.Contains(bar.Key);
+                    GUI.color = Color.white;
+                    GUI.Label(new Rect(x + 6f, y, nameWidth, lineHeight), bar.Key, _overlayLabelStyle);
+                    GUI.color = new Color(1f, 1f, 1f, 0.15f);
+                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth, lineHeight - 8f), Texture2D.whiteTexture);
+                    GUI.color = suspect ? new Color(0.95f, 0.25f, 0.2f) : bar.Value / total >= 0.25f ? new Color(0.95f, 0.75f, 0.2f) : new Color(0.35f, 0.65f, 0.95f);
+                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth * Mathf.Clamp01(bar.Value / scale), lineHeight - 8f), Texture2D.whiteTexture);
+                    GUI.color = Color.white;
+                    GUI.Label(new Rect(x + 10f + nameWidth + barWidth, y, valueWidth + 20f, lineHeight), _overlayMemBarLabels[i], _overlayLabelStyle);
+                    y += lineHeight;
+                }
+
+                GUI.color = previous;
+            }
+
+            if (_overlayMem.Value)
+            {
+                for (int i = 0; i < _memSuspects.Count; i++)
+                {
+                    DrawRedLine(x, ref y, width, lineHeight, _memSuspects[i]);
+                }
+            }
+        }
+
+        private void DrawRedLine(float x, ref float y, float width, float lineHeight, string text)
+        {
+            Color previous = _overlayLabelStyle.normal.textColor;
+            _overlayLabelStyle.normal.textColor = new Color(1f, 0.4f, 0.35f);
+            GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), text, _overlayLabelStyle);
+            _overlayLabelStyle.normal.textColor = previous;
+            y += lineHeight;
         }
     }
 }

@@ -20,6 +20,7 @@ namespace CactusPie.RamCleanerInterval
         private const string ProfilerSection = "10. Mod profiler";
         private const string ModObjectsSection = "11. Mod objects";
         private const string FpsSection = "12. FPS history";
+        private const string MemSuspectSection = "13. Memory suspects";
         private const string InternalSection = "Internal";
 
         // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
@@ -37,6 +38,7 @@ namespace CactusPie.RamCleanerInterval
         private const string ProfilerCategory = "10. 모드별 부하 분석 (어떤 모드가 프레임을 먹나)";
         private const string ModObjectsCategory = "11. 모드별 오브젝트 증가 (참고용)";
         private const string FpsCategory = "12. 프레임 기록·이전 레이드와 비교";
+        private const string MemSuspectCategory = "13. 메모리 누수 의심 판정";
 
         private ConfigEntry<bool> _gcEnabled;
         private ConfigEntry<float> _gcGrowthGb;
@@ -91,6 +93,12 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<bool> _overlayFps;
         private ConfigEntry<bool> _overlayMods;
         private ConfigEntry<int> _overlayModCount;
+        private ConfigEntry<bool> _overlayMem;
+        private ConfigEntry<bool> _memSuspectEnabled;
+        private ConfigEntry<float> _allocSuspectMbPerMin;
+        private ConfigEntry<int> _retainedSuspectMbPerMin;
+        private ConfigEntry<int> _perDeathSuspectMb;
+        private ConfigEntry<bool> _memSuspectNotify;
 
         private ConfigEntry<bool> _onlyInRaid;
         private ConfigEntry<bool> _showOverlay;
@@ -108,6 +116,7 @@ namespace CactusPie.RamCleanerInterval
             BindReportSettings();
             BindWarningSettings();
             BindProfilerSettings();
+            BindMemorySuspectSettings();
             MigrateSettings();
         }
 
@@ -243,6 +252,32 @@ namespace CactusPie.RamCleanerInterval
             _fpsNotify = Bind(FpsSection, FpsCategory, "In-game notification", "게임 알림으로 표시", true,
                 "프레임 저하 경고를 게임 알림으로도 띄웁니다.",
                 null, 8);
+        }
+
+        private void BindMemorySuspectSettings()
+        {
+            _memSuspectEnabled = Bind(MemSuspectSection, MemSuspectCategory, "Enabled", "메모리 누수 의심 판정 켜기", true,
+                "세 가지 신호로 메모리 의심을 판정해 F12·로그([mem suspect])·화면에 표시합니다. " +
+                "① 모드별 메모리 생성량(10번 측정 때 같이 잼) ② GC 뒤에도 계속 남는 관리 메모리(진짜 누수 신호) " +
+                "③ 사망 1명당 메모리(봇 장비 — 봇 스폰 모드 쪽). 11번을 켜면 모드별 오브젝트 증가도 포함합니다.",
+                null, 10);
+
+            _allocSuspectMbPerMin = Bind(MemSuspectSection, MemSuspectCategory, "Alloc suspect (MB/min)", "의심 기준: 모드 메모리 생성 (MB/분)", 50f,
+                "한 모드가 분당 이만큼 넘게 만들면서 모드 전체 생성량의 40% 이상이면 의심합니다(레이드 초반보다 2배 늘어도 의심). " +
+                "레이드 중엔 게임이 GC를 꺼 둬서 이게 그대로 메모리 증가가 됩니다(1번 자동 GC가 치우긴 함).",
+                new AcceptableValueRange<float>(5f, 1000f), 9);
+
+            _retainedSuspectMbPerMin = Bind(MemSuspectSection, MemSuspectCategory, "Retained suspect (MB/min)", "의심 기준: GC 뒤 남는 양 (MB/분)", 10,
+                "자동 GC가 끝날 때마다 남는 관리 메모리가 분당 이만큼 넘게 계속 오르면 '관리 메모리 누수 의심'으로 표시합니다(GC 3회·10분 이상 기준).",
+                new AcceptableValueRange<int>(1, 500), 8);
+
+            _perDeathSuspectMb = Bind(MemSuspectSection, MemSuspectCategory, "Per-death suspect (MB)", "의심 기준: 사망 1명당 메모리 (MB)", 200,
+                "최근 사망 10명 기준 1명당 메모리가 이보다 크면 '봇 장비 메모리 과다'로 표시합니다. 참고: APBS 수정 전 280~340MB, 후 60~75MB.",
+                new AcceptableValueRange<int>(50, 2000), 7);
+
+            _memSuspectNotify = Bind(MemSuspectSection, MemSuspectCategory, "In-game notification", "게임 알림으로 표시", true,
+                "새 의심이 생기면 종류별로 레이드당 한 번 게임 알림을 띄웁니다.",
+                null, 6);
         }
 
         private void BindLeakSettings()
@@ -393,6 +428,10 @@ namespace CactusPie.RamCleanerInterval
 
             _overlayMods = Bind(GeneralSection, GeneralCategory, "Overlay mod bars", "화면 표시: 모드별 부하 막대", true,
                 "그 밑에 '10. 모드별 부하 분석' 결과를 막대로 표시하고, 의심 모드가 있으면 빨간 글씨로 알려 줍니다.",
+                null, 7);
+
+            _overlayMem = Bind(GeneralSection, GeneralCategory, "Overlay memory bars", "화면 표시: 메모리 의심 막대", true,
+                "그 밑에 모드별 메모리 생성량(MB/분) 막대와 '13. 메모리 누수 의심 판정' 결과를 빨간 글씨로 표시합니다.",
                 null, 7);
 
             _overlayModCount = Bind(GeneralSection, GeneralCategory, "Overlay mod bar count", "화면 표시: 막대 개수", 5,
