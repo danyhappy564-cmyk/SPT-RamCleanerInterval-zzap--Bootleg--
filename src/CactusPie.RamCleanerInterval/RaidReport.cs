@@ -116,7 +116,7 @@ namespace CactusPie.RamCleanerInterval
         }
 
         /// <summary>Ends the raid and returns (log line, short Korean text for the in-game notification).</summary>
-        public void End(HitchMonitor hitches, out string logLine, out string notification)
+        public void End(HitchMonitor hitches, float avgFps, float lowFps, string suspect, out string logLine, out string notification)
         {
             Active = false;
             double minutes = (DateTime.Now - _start).TotalMinutes;
@@ -132,12 +132,18 @@ namespace CactusPie.RamCleanerInterval
                       $"working set {MemoryStats.Gb(_peakWorkingSet)} GB, VRAM {MemoryStats.Gb(_peakVram)} GB, lowest free commit {commit} GB | " +
                       $"GC {GcCount}x reclaimed {MemoryStats.Gb(GcReclaimed)} GB (longest frame {GcMaxSliceMs:0}ms), " +
                       $"asset unloads {AssetUnloads}, trims {Trims}, warnings {Warnings} | " +
-                      $"long frames {hitches.Count} (100ms+ {hitches.CountOver100}, by RAM cleaner {hitches.Ours}, worst {hitches.MaxMs:0}ms: {hitches.MaxWhat})";
+                      $"long frames {hitches.Count} (100ms+ {hitches.CountOver100}, by RAM cleaner {hitches.Ours}, worst {hitches.MaxMs:0}ms: {hitches.MaxWhat}) | " +
+                      $"fps avg {avgFps:0}, 1% low {lowFps:0}" + (suspect != null ? $" | suspect mod: {suspect}" : string.Empty);
 
             var sb = new StringBuilder();
             sb.Append($"RAM 클리너 레이드 결산 ({minutes:0}분, 사망 {deaths}명)\n");
             sb.Append($"최고 메모리 {MemoryStats.Gb(_peakPrivate)}GB · 사망 1명당 {perDeathKo}\n");
-            sb.Append($"GC {GcCount}회 {MemoryStats.Gb(GcReclaimed)}GB 회수 · 끊김 {hitches.Count}회(이 모드 {hitches.Ours}회, 최대 {hitches.MaxMs:0}ms)");
+            sb.Append($"FPS 평균 {avgFps:0} · 1% 저점 {lowFps:0} · 끊김 {hitches.Count}회(이 모드 {hitches.Ours}회, 최대 {hitches.MaxMs:0}ms)\n");
+            sb.Append($"GC {GcCount}회 {MemoryStats.Gb(GcReclaimed)}GB 회수");
+            if (suspect != null)
+            {
+                sb.Append($"\n의심 모드: {suspect}");
+            }
             notification = sb.ToString();
             LastSummaryKorean = $"{DateTime.Now:HH:mm} — " + notification.Replace("\n", " / ");
         }

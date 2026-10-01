@@ -14,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.4.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.5.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -49,6 +49,24 @@ namespace CactusPie.RamCleanerInterval
         private double _leakMs;
         private int _assetActiveFrame = -1;
         private string _lastReport = "아직 없음";
+
+        private ModCostProfiler _profiler;
+        private ModObjectCounter _objects;
+        private FrameStats _frames;
+        private PerformanceHistory _history;
+        private float _profilerNext = -1f;
+        private float _objectsNext = -1f;
+        private float _objectsPendingSince = -1f;
+        private float _lastSpawnTime = float.NegativeInfinity;
+        private string _map;
+        private string _fpsText = string.Empty;
+        private string _modTitle = string.Empty;
+        private string _suspectText;
+        private readonly List<KeyValuePair<string, float>> _overlayBars = new List<KeyValuePair<string, float>>();
+        private readonly List<string> _overlayBarLabels = new List<string>();
+        private GUIStyle _overlayLabelStyle;
+        private string _overlayWidthFor;
+        private float _overlayTextWidth;
         private float _leakNext = -1f;
         private float _leakPendingSince = -1f;
 
@@ -102,8 +120,6 @@ namespace CactusPie.RamCleanerInterval
         private string _statusText = "측정 중...";
         private string _overlayText = string.Empty;
         private GUIStyle _overlayStyle;
-        private string _overlaySizeFor;
-        private Vector2 _overlaySize;
 
         internal void Awake()
         {
@@ -116,7 +132,13 @@ namespace CactusPie.RamCleanerInterval
             _hitch = new HitchMonitor(Logger);
             _report = new RaidReport();
             _warnings = new MemoryWarnings();
-            _hitchContext = () => $"players alive {_alive}, dead {_dead}, GC {GarbageCollector.GCMode}";
+            _profiler = new ModCostProfiler(Logger);
+            _objects = new ModObjectCounter(Logger);
+            _frames = new FrameStats();
+            _history = new PerformanceHistory(Logger);
+            _hitchContext = () => $"players alive {_alive}, dead {_dead}, GC {GarbageCollector.GCMode}" +
+                                  (Time.realtimeSinceStartup - _lastSpawnTime < 1.5f ? ", a bot spawned within the last second" : string.Empty) +
+                                  (_profiler.Measuring ? ", mod profiler measuring" : string.Empty);
 
             BindSettings();
             _unloadAuto.SettingChanged += (_, __) => s_autoUnloadUselessThisSession = false;
@@ -146,6 +168,9 @@ namespace CactusPie.RamCleanerInterval
             }
 
             CheckHitch(now);
+            _frames.Tick(_inGame && _raidStartedAt >= 0f && now - _raidStartedAt > 5f);
+            _profiler.CountFrame();
+            TickProfilerInstall(now);
 
             if (_gc.Running)
             {
@@ -201,6 +226,12 @@ namespace CactusPie.RamCleanerInterval
                 EvaluateLog(now);
             }
 
+            if (_inGame)
+            {
+                EvaluateProfiler(now);
+                EvaluateModObjects(now);
+            }
+
             BuildTexts(now);
         }
 
@@ -240,7 +271,9 @@ namespace CactusPie.RamCleanerInterval
                 _gc.Abort(false, "레이드가 끝나서 중단");
                 _combat.Unbind();
                 Logger.LogInfo("Left raid");
+                _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f);
                 FinishRaidReport();
+                FinishFpsHistory();
             }
         }
 
@@ -269,6 +302,20 @@ namespace CactusPie.RamCleanerInterval
             _deathSamples.Clear();
             _hitch.Reset();
             _warnings.ResetRaid();
+            _frames.Reset();
+            _profiler.ResetRaid();
+            _objects.Reset();
+            _profilerNext = now + 60f;
+            _objectsNext = now + 60f;
+            _objectsPendingSince = -1f;
+            try
+            {
+                _map = Singleton<GameWorld>.Instance?.LocationId;
+            }
+            catch (Exception)
+            {
+                _map = null;
+            }
             _report.Begin(_snapshot, _dead);
             _leakNext = now + LeakFirstSnapshotDelay;
             Logger.LogInfo($"Raid started{(started ? string.Empty : " (status timeout)")}: {DescribeForLog(_snapshot)}");
@@ -656,6 +703,117 @@ namespace CactusPie.RamCleanerInterval
             _hitch.Check(active, _hitchThresholdMs.Value, _hitchContext);
         }
 
+        // ---------------------------------------------------------------- Mod profiler / mod objects / FPS history
+
+        private void TickProfilerInstall(float now)
+        {
+            if (!_profilerEnabled.Value || _inGame || now < 20f)
+            {
+                return;
+            }
+
+            // Install in the menu only: patching ~1-3k methods is a few seconds of work, spread over frames.
+            if (_profiler.Status == ModCostProfiler.State.NotInstalled)
+            {
+                _profiler.BeginInstall();
+            }
+            else if (_profiler.Status == ModCostProfiler.State.Installing)
+            {
+                _profiler.InstallStep(40);
+            }
+        }
+
+        private void EvaluateProfiler(float now)
+        {
+            if (!_profilerEnabled.Value || _profiler.Status != ModCostProfiler.State.Ready || _raidStartedAt < 0f)
+            {
+                if (_profiler.Measuring)
+                {
+                    _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f);
+                }
+
+                return;
+            }
+
+            if (_profiler.Measuring)
+            {
+                if (_profiler.WindowElapsed < _profilerWindowSec.Value)
+                {
+                    return;
+                }
+
+                _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f);
+                _profilerNext = _profilerContinuous.Value ? now : now + _profilerIntervalMin.Value * 60f;
+            }
+
+            if (now >= _profilerNext)
+            {
+                _profiler.StartWindow();
+            }
+        }
+
+        private void EvaluateModObjects(float now)
+        {
+            if (!_objectsEnabled.Value || _raidStartedAt < 0f || now < _objectsNext)
+            {
+                _objectsPendingSince = -1f;
+                return;
+            }
+
+            if (_objectsPendingSince < 0f)
+            {
+                _objectsPendingSince = now;
+            }
+
+            if (!IsQuietNow(_objectsPendingSince, LeakMaxDeferSeconds, now))
+            {
+                return;
+            }
+
+            _objectsPendingSince = -1f;
+            _objectsNext = now + _profilerIntervalMin.Value * 60f;
+            var watch = Stopwatch.StartNew();
+            try
+            {
+                _objects.Snapshot(_objectsSuspectGrowth.Value);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Mod object count failed: {ex}");
+            }
+
+            watch.Stop();
+            _leakFrame = Time.frameCount;
+            _leakMs = watch.Elapsed.TotalMilliseconds;
+        }
+
+        private void FinishFpsHistory()
+        {
+            if (!_fpsHistoryEnabled.Value || _frames.Frames == 0)
+            {
+                return;
+            }
+
+            string warning = _history.AddAndCompare(_map, (float)(_frames.TotalSeconds / 60.0), _frames.AverageFps,
+                _frames.OnePercentLowFps(), Math.Max(0, _dead - _deadAtStart), _fpsDropPercent.Value, out string logLine);
+            if (logLine != null)
+            {
+                Logger.LogInfo(logLine);
+            }
+
+            if (warning == null)
+            {
+                return;
+            }
+
+            Logger.LogWarning(warning);
+            if (_fpsNotify.Value)
+            {
+                Notify(warning, true);
+            }
+        }
+
+
         private void FinishRaidReport()
         {
             if (!_report.Active)
@@ -663,7 +821,8 @@ namespace CactusPie.RamCleanerInterval
                 return;
             }
 
-            _report.End(_hitch, out string logLine, out string notification);
+            _report.End(_hitch, _frames.AverageFps, _frames.OnePercentLowFps(), _profiler.Suspect ?? _objects.Suspect,
+                out string logLine, out string notification);
             _lastReport = _report.LastSummaryKorean;
             if (!_reportEnabled.Value)
             {
@@ -793,6 +952,7 @@ namespace CactusPie.RamCleanerInterval
 
         private void SampleWorld()
         {
+            int previousAlive = _alive;
             _alive = -1;
             _dead = -1;
             try
@@ -800,7 +960,13 @@ namespace CactusPie.RamCleanerInterval
                 GameWorld world = _inGame ? Singleton<GameWorld>.Instance : null;
                 if (world != null)
                 {
-                    _alive = world.AllAlivePlayersList.Count;
+                    int alive = world.AllAlivePlayersList.Count;
+                    if (previousAlive >= 0 && alive > previousAlive)
+                    {
+                        _lastSpawnTime = Time.realtimeSinceStartup;
+                    }
+
+                    _alive = alive;
                     _dead = Math.Max(0, world.AllPlayersEverExisted.Count() - _alive);
                 }
             }
@@ -948,6 +1114,44 @@ namespace CactusPie.RamCleanerInterval
             sb.Append("마지막 GC 정리: ").Append(_gc.LastResult).Append('\n');
             sb.Append("마지막 워킹셋 정리: ").Append(_lastTrimResult).Append('\n');
             sb.Append("마지막 에셋 정리: ").Append(_lastAssetResult).Append('\n');
+            sb.Append("FPS: 지금 ").Append(_frames.CurrentFps.ToString("0"));
+            if (_frames.Frames > 0)
+            {
+                sb.Append(" · 레이드 평균 ").Append(_frames.AverageFps.ToString("0"))
+                  .Append(" · 1% 저점 ").Append(_frames.OnePercentLowFps().ToString("0"));
+            }
+
+            sb.Append('\n');
+            if (_profilerEnabled.Value)
+            {
+                sb.Append("모드별 부하: ").Append(DescribeProfilerState()).Append('\n');
+                if (_profiler.LastResult.Count > 0)
+                {
+                    sb.Append("  ");
+                    for (int i = 0; i < Math.Min(6, _profiler.LastResult.Count); i++)
+                    {
+                        if (i > 0)
+                        {
+                            sb.Append(", ");
+                        }
+
+                        sb.Append(_profiler.LastResult[i].Key).Append(' ').Append(_profiler.LastResult[i].Value.ToString("0.0")).Append("ms");
+                    }
+
+                    sb.Append('\n');
+                }
+            }
+
+            if (_objectsEnabled.Value)
+            {
+                sb.Append("모드별 오브젝트: ").Append(_objects.LastSummary).Append('\n');
+            }
+
+            if (_fpsHistoryEnabled.Value)
+            {
+                sb.Append("이전 레이드 비교: ").Append(_history.LastComparison).Append('\n');
+            }
+
             if (_hitchEnabled.Value)
             {
                 sb.Append("끊김(이번 레이드): ").Append(_hitch.Count).Append("회, 그중 이 모드 ").Append(_hitch.Ours)
@@ -972,6 +1176,7 @@ namespace CactusPie.RamCleanerInterval
                 string vramText = vram >= 0 ? MemoryStats.Gb(vram) + "GB" : "?";
                 _overlayText = $"RAM 클리너 | 힙 {MemoryStats.Gb(s.MonoUsed)}GB · 네이티브 {MemoryStats.Gb(s.Native)}GB · " +
                                $"VRAM {vramText} · 여유 {MemoryStats.Gb(s.SystemAvailable)}GB · GC {gcState}";
+                BuildOverlayExtras(now);
             }
         }
 
@@ -991,6 +1196,66 @@ namespace CactusPie.RamCleanerInterval
             {
                 sb.Append("대기 중: 워킹셋 정리 (").Append((now - _trimPendingSince).ToString("0")).Append("초)\n");
             }
+        }
+
+        private string DescribeProfilerState()
+        {
+            switch (_profiler.Status)
+            {
+                case ModCostProfiler.State.NotInstalled:
+                    return "메인 메뉴에서 측정 장치 설치 대기";
+                case ModCostProfiler.State.Installing:
+                    return "측정 장치 설치 중...";
+            }
+
+            if (_profiler.Measuring)
+            {
+                return $"측정 중 {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value}초";
+            }
+
+            return _profiler.LastSummary;
+        }
+
+        private void BuildOverlayExtras(float now)
+        {
+            _fpsText = _overlayFps.Value
+                ? $"FPS {_frames.CurrentFps:0}" +
+                  (_frames.Frames > 0 ? $" · 평균 {_frames.AverageFps:0} · 1% 저점 {_frames.OnePercentLowFps():0}" : string.Empty) +
+                  (_hitchEnabled.Value && _inGame ? $" · 끊김 {_hitch.Count}회" : string.Empty)
+                : string.Empty;
+
+            _overlayBars.Clear();
+            _overlayBarLabels.Clear();
+            _modTitle = string.Empty;
+            _suspectText = null;
+            if (!_overlayMods.Value || !_profilerEnabled.Value)
+            {
+                return;
+            }
+
+            if (_profiler.Measuring)
+            {
+                _modTitle = $"모드별 부하: 측정 중 {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value}초";
+            }
+            else if (_profiler.LastResultTime >= 0f)
+            {
+                float minutes = (now - _profiler.LastResultTime) / 60f;
+                _modTitle = $"모드별 부하 (프레임당 ms, {(minutes < 1f ? "방금" : minutes.ToString("0") + "분 전")} 측정 · 프레임 {_profiler.LastFrameMs:0.0}ms)";
+            }
+            else
+            {
+                _modTitle = "모드별 부하: " + DescribeProfilerState();
+            }
+
+            for (int i = 0; i < Math.Min(_overlayModCount.Value, _profiler.LastResult.Count); i++)
+            {
+                KeyValuePair<string, float> bar = _profiler.LastResult[i];
+                _overlayBars.Add(bar);
+                _overlayBarLabels.Add($"{bar.Value:0.0}ms");
+            }
+
+            string suspect = _profiler.Suspect ?? _objects.Suspect;
+            _suspectText = suspect != null ? "의심 모드: " + suspect : null;
         }
 
         private void ManualButtonsDrawer(ConfigEntryBase entry)
@@ -1026,29 +1291,91 @@ namespace CactusPie.RamCleanerInterval
 
         internal void OnGUI()
         {
-            if (!_showOverlay.Value || _overlayText.Length == 0)
+            if (!_showOverlay.Value || _overlayText.Length == 0 || Event.current.type != EventType.Repaint)
             {
                 return;
             }
 
             if (_overlayStyle == null)
             {
-                _overlayStyle = new GUIStyle(GUI.skin.box)
+                _overlayStyle = new GUIStyle(GUI.skin.box);
+                _overlayLabelStyle = new GUIStyle(GUI.skin.label)
                 {
                     fontSize = 13,
                     alignment = TextAnchor.MiddleLeft,
                     wordWrap = false,
+                    clipping = TextClipping.Clip,
                 };
-                _overlayStyle.normal.textColor = Color.white;
+                _overlayLabelStyle.normal.textColor = Color.white;
             }
 
-            if (!ReferenceEquals(_overlaySizeFor, _overlayText))
+            const float x = 6f;
+            const float lineHeight = 18f;
+            const float nameWidth = 170f;
+            const float barWidth = 220f;
+            const float valueWidth = 60f;
+            if (!ReferenceEquals(_overlayWidthFor, _overlayText))
             {
-                _overlaySizeFor = _overlayText;
-                _overlaySize = _overlayStyle.CalcSize(new GUIContent(_overlayText));
+                _overlayWidthFor = _overlayText;
+                _overlayTextWidth = _overlayLabelStyle.CalcSize(new GUIContent(_overlayText)).x;
             }
 
-            GUI.Box(new Rect(6f, 6f, _overlaySize.x + 8f, _overlaySize.y + 2f), _overlayText, _overlayStyle);
+            float width = Mathf.Max(nameWidth + barWidth + valueWidth + 16f, _overlayTextWidth + 12f);
+
+            int lines = 1 + (_fpsText.Length > 0 ? 1 : 0) + (_modTitle.Length > 0 ? 1 + _overlayBars.Count : 0) + (_suspectText != null ? 1 : 0);
+            GUI.Box(new Rect(x, 6f, width, lines * lineHeight + 8f), GUIContent.none, _overlayStyle);
+
+            float y = 10f;
+            GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _overlayText, _overlayLabelStyle);
+            y += lineHeight;
+
+            if (_fpsText.Length > 0)
+            {
+                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _fpsText, _overlayLabelStyle);
+                y += lineHeight;
+            }
+
+            if (_modTitle.Length > 0)
+            {
+                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _modTitle, _overlayLabelStyle);
+                y += lineHeight;
+
+                // Scale: the biggest bar fills the width, but never zoom in past 4 ms so tiny costs look tiny.
+                float scale = 4f;
+                for (int i = 0; i < _overlayBars.Count; i++)
+                {
+                    scale = Mathf.Max(scale, _overlayBars[i].Value);
+                }
+
+                Color previous = GUI.color;
+                for (int i = 0; i < _overlayBars.Count; i++)
+                {
+                    KeyValuePair<string, float> bar = _overlayBars[i];
+                    float frameShare = _profiler.LastFrameMs > 0f ? bar.Value / _profiler.LastFrameMs : 0f;
+                    bool suspect = _suspectText != null && _suspectText.Contains(bar.Key);
+                    GUI.color = Color.white;
+                    GUI.Label(new Rect(x + 6f, y, nameWidth, lineHeight), bar.Key, _overlayLabelStyle);
+
+                    GUI.color = new Color(1f, 1f, 1f, 0.15f);
+                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth, lineHeight - 8f), Texture2D.whiteTexture);
+                    GUI.color = suspect ? new Color(0.95f, 0.25f, 0.2f) : frameShare >= 0.08f ? new Color(0.95f, 0.75f, 0.2f) : new Color(0.3f, 0.85f, 0.4f);
+                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth * Mathf.Clamp01(bar.Value / scale), lineHeight - 8f), Texture2D.whiteTexture);
+
+                    GUI.color = Color.white;
+                    GUI.Label(new Rect(x + 10f + nameWidth + barWidth, y, valueWidth, lineHeight), _overlayBarLabels[i], _overlayLabelStyle);
+                    y += lineHeight;
+                }
+
+                GUI.color = previous;
+            }
+
+            if (_suspectText != null)
+            {
+                Color previous = _overlayLabelStyle.normal.textColor;
+                _overlayLabelStyle.normal.textColor = new Color(1f, 0.4f, 0.35f);
+                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _suspectText, _overlayLabelStyle);
+                _overlayLabelStyle.normal.textColor = previous;
+            }
         }
     }
 }

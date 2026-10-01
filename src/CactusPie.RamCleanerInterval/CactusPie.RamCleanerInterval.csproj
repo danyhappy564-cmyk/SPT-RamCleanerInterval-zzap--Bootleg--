@@ -8,7 +8,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <VersionPrefix>2.4.0</VersionPrefix>
+    <VersionPrefix>2.5.0</VersionPrefix>
     <Version>$(VersionPrefix)</Version>
     <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
     <FileVersion>$(VersionPrefix).0</FileVersion>
@@ -31,11 +31,15 @@
     <PluginFolder>BepInEx\plugins\CactusPie.RamCleanerInterval</PluginFolder>
   </PropertyGroup>
 
-  <!-- No spt-reflection / Harmony reference: the plugin patches nothing, it only reads memory
-       numbers and drives UnityEngine.Scripting.GarbageCollector. -->
+  <!-- No spt-reflection reference: the plugin does not patch game code. 0Harmony (from BepInEx\core) is
+       only used by the optional mod profiler to wrap other mods' methods with timing hooks. -->
   <ItemGroup>
     <Reference Include="BepInEx">
       <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExCore)\0Harmony.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">

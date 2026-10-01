@@ -17,20 +17,26 @@ namespace CactusPie.RamCleanerInterval
         private const string HitchSection = "7. Hitch detector";
         private const string ReportSection = "8. Raid report";
         private const string WarningSection = "9. Warnings";
+        private const string ProfilerSection = "10. Mod profiler";
+        private const string ModObjectsSection = "11. Mod objects";
+        private const string FpsSection = "12. FPS history";
         private const string InternalSection = "Internal";
 
         // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
         private const int CurrentConfigVersion = 230;
 
-        private const string GcCategory = "1. 자동 메모리 정리 (GC) — 추천";
-        private const string TrimCategory = "2. 워킹셋 정리 (원본 RAM 클리너 방식)";
-        private const string AssetCategory = "3. 에셋·VRAM 정리 (SPTVRAMCleaner 개선판)";
-        private const string TimingCategory = "4. 전투 중에는 미루기";
-        private const string GeneralCategory = "5. 공통 · 수동 실행 · 상태";
-        private const string LeakCategory = "6. 누수 추적 (진단용)";
-        private const string HitchCategory = "7. 끊김 감지기";
-        private const string ReportCategory = "8. 레이드 결산 리포트";
-        private const string WarningCategory = "9. 메모리 위험 경고";
+        private const string GcCategory = "01. 자동 메모리 정리 (GC) — 추천";
+        private const string TrimCategory = "02. 워킹셋 정리 (원본 RAM 클리너 방식)";
+        private const string AssetCategory = "03. 에셋·VRAM 정리 (SPTVRAMCleaner 개선판)";
+        private const string TimingCategory = "04. 전투 중에는 미루기";
+        private const string GeneralCategory = "05. 공통 · 수동 실행 · 상태";
+        private const string LeakCategory = "06. 누수 추적 (진단용)";
+        private const string HitchCategory = "07. 끊김 감지기";
+        private const string ReportCategory = "08. 레이드 결산 리포트";
+        private const string WarningCategory = "09. 메모리 위험 경고";
+        private const string ProfilerCategory = "10. 모드별 부하 분석 (어떤 모드가 프레임을 먹나)";
+        private const string ModObjectsCategory = "11. 모드별 오브젝트 증가 (참고용)";
+        private const string FpsCategory = "12. 프레임 기록·이전 레이드와 비교";
 
         private ConfigEntry<bool> _gcEnabled;
         private ConfigEntry<float> _gcGrowthGb;
@@ -71,6 +77,21 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<int> _warnVramSeconds;
         private ConfigEntry<bool> _warnNotify;
 
+        private ConfigEntry<bool> _profilerEnabled;
+        private ConfigEntry<int> _profilerIntervalMin;
+        private ConfigEntry<int> _profilerWindowSec;
+        private ConfigEntry<bool> _profilerContinuous;
+        private ConfigEntry<float> _profilerSuspectMs;
+        private ConfigEntry<int> _profilerSuspectShare;
+        private ConfigEntry<bool> _objectsEnabled;
+        private ConfigEntry<int> _objectsSuspectGrowth;
+        private ConfigEntry<bool> _fpsHistoryEnabled;
+        private ConfigEntry<int> _fpsDropPercent;
+        private ConfigEntry<bool> _fpsNotify;
+        private ConfigEntry<bool> _overlayFps;
+        private ConfigEntry<bool> _overlayMods;
+        private ConfigEntry<int> _overlayModCount;
+
         private ConfigEntry<bool> _onlyInRaid;
         private ConfigEntry<bool> _showOverlay;
         private ConfigEntry<int> _logIntervalSec;
@@ -86,6 +107,7 @@ namespace CactusPie.RamCleanerInterval
             BindHitchSettings();
             BindReportSettings();
             BindWarningSettings();
+            BindProfilerSettings();
             MigrateSettings();
         }
 
@@ -169,6 +191,58 @@ namespace CactusPie.RamCleanerInterval
             _warnNotify = Bind(WarningSection, WarningCategory, "In-game notification", "게임 알림으로 표시", true,
                 "경고를 게임 알림으로 띄웁니다. 끄면 로그와 F12 '현재 상태'에만 남습니다.",
                 null, 5);
+        }
+
+        private void BindProfilerSettings()
+        {
+            _profilerEnabled = Bind(ProfilerSection, ProfilerCategory, "Enabled", "모드별 부하 분석 켜기", true,
+                "각 모드의 코드(게임에 끼워 넣은 함수, 모드의 매 프레임 함수, SAIN 같은 봇 두뇌)가 한 프레임에 몇 ms를 쓰는지 잽니다. " +
+                "결과는 로그([mods] 줄), F12 '현재 상태', 화면 막대에 나오고, 한 모드가 너무 크면 '의심 모드'로 표시합니다. " +
+                "게임 시작 후 메인 메뉴에서 한 번 측정 장치를 설치합니다(1~3초). 바꾸면 다음 게임 실행부터 완전히 적용됩니다.",
+                null, 10);
+
+            _profilerIntervalMin = Bind(ProfilerSection, ProfilerCategory, "Interval (min)", "측정 간격 (분)", 5,
+                "레이드 시작 1분 뒤 첫 측정, 그 뒤로 이 간격마다 측정합니다.",
+                new AcceptableValueRange<int>(1, 30), 9);
+
+            _profilerWindowSec = Bind(ProfilerSection, ProfilerCategory, "Window (s)", "한 번 측정 시간 (초)", 15,
+                "한 번 측정할 때 몇 초 동안 모을지 정합니다. 측정 중에는 아주 약간(보통 0.1~0.5ms/프레임) 부하가 더 생깁니다.",
+                new AcceptableValueRange<int>(5, 60), 8);
+
+            _profilerContinuous = Bind(ProfilerSection, ProfilerCategory, "Continuous", "상시 측정 (막대 실시간 갱신)", false,
+                "켜면 레이드 내내 측정하고 위 '한 번 측정 시간'마다 막대를 갱신합니다. 원인을 찾는 동안만 켜는 걸 추천합니다.",
+                null, 7);
+
+            _profilerSuspectMs = Bind(ProfilerSection, ProfilerCategory, "Suspect at (ms)", "의심 기준: 프레임당 ms", 2f,
+                "1위 모드가 이 ms 이상이면서 아래 비율도 넘으면 '의심 모드'로 표시합니다.",
+                new AcceptableValueRange<float>(0.5f, 20f), 6);
+
+            _profilerSuspectShare = Bind(ProfilerSection, ProfilerCategory, "Suspect share (%)", "의심 기준: 프레임 중 비율 (%)", 15,
+                "1위 모드가 한 프레임 시간의 이 % 이상을 쓰면 의심합니다. 레이드 초반보다 2배 넘게 느려진 모드도 의심으로 표시합니다.",
+                new AcceptableValueRange<int>(5, 80), 5);
+
+            _objectsEnabled = Bind(ModObjectsSection, ModObjectsCategory, "Enabled", "모드별 오브젝트 증가 추적 켜기", false,
+                "측정 간격마다 각 모드가 만든 컴포넌트 수를 세서, 레이드 중 계속 늘어나는 모드를 표시합니다(메모리 의심). " +
+                "한 번 셀 때 0.2~0.8초 끊길 수 있어 조용한 순간에만 하고 기본은 꺼 둡니다. " +
+                "봇 장비처럼 게임이 만드는 오브젝트는 모드 이름이 안 남아서 잡히지 않습니다(그건 '사망 1명당 메모리'로 보세요).",
+                null, 10);
+
+            _objectsSuspectGrowth = Bind(ModObjectsSection, ModObjectsCategory, "Suspect growth", "의심 기준: 늘어난 개수", 2000,
+                "레이드 시작 이후 한 모드의 컴포넌트가 이만큼 넘게 늘면 의심합니다.",
+                new AcceptableValueRange<int>(100, 100000), 9);
+
+            _fpsHistoryEnabled = Bind(FpsSection, FpsCategory, "Enabled", "레이드별 프레임 기록·비교 켜기", true,
+                "레이드가 끝날 때마다 맵, 평균 FPS, 1% 저점, 사망 수, 설치된 모드 목록(버전 + DLL 수정 시각)을 " +
+                "BepInEx\\config\\RamCleaner.performance.txt에 남기고, 같은 맵의 이전 레이드와 비교합니다.",
+                null, 10);
+
+            _fpsDropPercent = Bind(FpsSection, FpsCategory, "Drop warning (%)", "프레임 저하 경고 기준 (%)", 15,
+                "같은 맵 이전 레이드보다 평균 FPS가 이 % 넘게 낮으면 경고하고, 그 사이 추가·업데이트·삭제된 모드를 같이 알려 줍니다.",
+                new AcceptableValueRange<int>(5, 50), 9);
+
+            _fpsNotify = Bind(FpsSection, FpsCategory, "In-game notification", "게임 알림으로 표시", true,
+                "프레임 저하 경고를 게임 알림으로도 띄웁니다.",
+                null, 8);
         }
 
         private void BindLeakSettings()
@@ -309,9 +383,21 @@ namespace CactusPie.RamCleanerInterval
                 "1초마다 갱신되는 메모리 상태입니다.",
                 null, 8, StatusDrawer);
 
-            _showOverlay = Bind(GeneralSection, GeneralCategory, "Show overlay", "화면에 메모리 표시", false,
-                "화면 왼쪽 위에 메모리 사용량을 한 줄로 띄웁니다. 누수 확인이나 설정 조절할 때 켜 두면 편합니다.",
+            _showOverlay = Bind(GeneralSection, GeneralCategory, "Show overlay", "화면 표시 켜기 (왼쪽 위)", false,
+                "화면 왼쪽 위에 메모리 사용량을 띄웁니다. 아래 'FPS 줄', '모드별 부하 막대'도 이게 켜져 있어야 보입니다.",
                 null, 7);
+
+            _overlayFps = Bind(GeneralSection, GeneralCategory, "Overlay FPS", "화면 표시: FPS 줄", true,
+                "메모리 줄 밑에 현재 FPS · 레이드 평균 · 1% 저점(가장 느린 1% 프레임의 FPS = 끊김 체감) · 끊김 횟수를 표시합니다.",
+                null, 7);
+
+            _overlayMods = Bind(GeneralSection, GeneralCategory, "Overlay mod bars", "화면 표시: 모드별 부하 막대", true,
+                "그 밑에 '10. 모드별 부하 분석' 결과를 막대로 표시하고, 의심 모드가 있으면 빨간 글씨로 알려 줍니다.",
+                null, 7);
+
+            _overlayModCount = Bind(GeneralSection, GeneralCategory, "Overlay mod bar count", "화면 표시: 막대 개수", 5,
+                "부하가 큰 순서로 몇 개 모드까지 막대로 보여줄지 정합니다.",
+                new AcceptableValueRange<int>(1, 12), 7);
 
             _logIntervalSec = Bind(GeneralSection, GeneralCategory, "Log interval (s)", "로그 기록 간격 (초, 0=끔)", 60,
                 "레이드 중 이 간격마다 BepInEx 로그(LogOutput.log)에 메모리 상태를 한 줄씩 남깁니다. 문제 제보할 때 이 로그가 있으면 원인 찾기가 쉽습니다.",
