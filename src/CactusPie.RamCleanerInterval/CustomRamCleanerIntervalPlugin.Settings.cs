@@ -24,7 +24,7 @@ namespace CactusPie.RamCleanerInterval
         private const string InternalSection = "Internal";
 
         // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
-        private const int CurrentConfigVersion = 230;
+        private const int CurrentConfigVersion = 280;
 
         private const string GcCategory = "01. 자동 메모리 정리 (GC) — 추천";
         private const string TrimCategory = "02. 워킹셋 정리 (원본 RAM 클리너 방식)";
@@ -73,6 +73,9 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<bool> _hitchModTracking;
         private ConfigEntry<bool> _hitchNotify;
         private ConfigEntry<bool> _overlayHitch;
+        private ConfigEntry<bool> _diagMode;
+        private ConfigEntry<KeyboardShortcut> _diagHotkey;
+        private ConfigEntry<bool> _diagHeavy;
         private ConfigEntry<bool> _reportEnabled;
         private ConfigEntry<bool> _reportNotify;
         private ConfigEntry<bool> _warnEnabled;
@@ -149,6 +152,13 @@ namespace CactusPie.RamCleanerInterval
                 }
             }
 
+            if (_configVersion.Value < 280 && _hitchModTracking.Value)
+            {
+                // 2.8.0: continuous per-mod measuring moved behind the one-key diagnostic mode; normal play stays light.
+                _hitchModTracking.Value = false;
+                Logger.LogInfo("Settings migrated to 2.8.0: '끊김 원인 모드 추적' is now off by default (use the diagnostic mode key)");
+            }
+
             _configVersion.Value = CurrentConfigVersion;
         }
 
@@ -164,10 +174,11 @@ namespace CactusPie.RamCleanerInterval
                 "이보다 오래 걸린 프레임만 기록합니다. 참고: 60fps 한 프레임은 약 16ms, 50ms면 눈에 띄는 끊김입니다.",
                 new AcceptableValueRange<int>(20, 1000), 9);
 
-            _hitchModTracking = Bind(HitchSection, HitchCategory, "Track mod causes", "끊김 원인 모드 추적 (상시 측정)", true,
+            _hitchModTracking = Bind(HitchSection, HitchCategory, "Track mod causes", "끊김 원인 모드 추적 (상시 측정)", false,
                 "레이드 내내 모드별 시간을 재서, 끊긴 프레임마다 그 프레임에서 가장 오래 걸린 모드를 원인으로 기록합니다. " +
                 "원인은 모드명 / RAM 클리너 / 봇 스폰 / 게임 자체(렌더링·물리·로딩 등 모드 코드 밖) 중 하나. " +
-                "'10. 모드별 부하 분석'이 켜져 있어야 하고, 켜면 그쪽도 상시 측정이 됩니다(보통 프레임당 0.1~0.5ms 추가).",
+                "'10. 모드별 부하 분석'이 켜져 있어야 하고, 켜면 그쪽도 상시 측정이 됩니다(보통 프레임당 0.1~0.5ms 추가). " +
+                "평소엔 꺼 두고 '원인 추적 모드'(단축키)로 필요할 때만 켜는 걸 추천합니다.",
                 null, 8);
 
             _hitchNotify = Bind(HitchSection, HitchCategory, "Suspect notification", "끊김 의심 게임 알림", true,
@@ -418,6 +429,19 @@ namespace CactusPie.RamCleanerInterval
 
         private void BindGeneralSettings()
         {
+            _diagMode = Bind(GeneralSection, GeneralCategory, "Diagnostic mode", "원인 추적 모드 (한 번에 켜기/끄기)", false,
+                "켜면 화면 표시 + 모드별 상시 측정 + 끊김 원인 추적을 한꺼번에 켭니다(개별 설정과 상관없이). 끄면 개별 설정대로 돌아가고, " +
+                "그동안의 요약(의심 모드, 끊김 원인, 메모리)이 전용 로그(BepInEx\\RamCleaner 폴더)에 저장됩니다. 아래 단축키로도 켜고 끌 수 있습니다.",
+                null, 12);
+
+            _diagHotkey = Bind(GeneralSection, GeneralCategory, "Diagnostic mode key", "원인 추적 모드 단축키", new KeyboardShortcut(UnityEngine.KeyCode.F9, UnityEngine.KeyCode.LeftControl),
+                "게임 중 이 키를 누르면 원인 추적 모드를 켜고 끕니다(게임 알림으로 알려 줌).",
+                null, 12);
+
+            _diagHeavy = Bind(GeneralSection, GeneralCategory, "Diagnostic includes heavy", "원인 추적 모드에 무거운 추적 포함", false,
+                "켜면 원인 추적 모드 때 '06. 누수 추적'과 '11. 모드별 오브젝트 증가'도 같이 켭니다. 각각 몇 분마다 0.2~1초 끊길 수 있습니다.",
+                null, 11);
+
             _onlyInRaid = Bind(GeneralSection, GeneralCategory, "Only in raid", "레이드 중에만 자동 실행", true,
                 "켜면 은신처·메뉴에서는 자동 정리를 하지 않습니다. 아래 수동 버튼은 언제나 동작합니다.",
                 null, 10);

@@ -14,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.7.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.8.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -59,28 +59,17 @@ namespace CactusPie.RamCleanerInterval
         private float _objectsPendingSince = -1f;
         private float _lastSpawnTime = float.NegativeInfinity;
         private string _map;
-        private string _fpsText = string.Empty;
-        private string _modTitle = string.Empty;
-        private string _suspectText;
-        private readonly List<KeyValuePair<string, float>> _overlayBars = new List<KeyValuePair<string, float>>();
-        private readonly List<string> _overlayBarLabels = new List<string>();
-        private GUIStyle _overlayLabelStyle;
 
         // Memory suspects: managed memory still alive after each of our GCs (a rising floor = a real managed leak).
         private readonly List<KeyValuePair<float, long>> _gcFloors = new List<KeyValuePair<float, long>>();
         private readonly List<string> _memSuspects = new List<string>();
-        private readonly List<KeyValuePair<string, float>> _overlayMemBars = new List<KeyValuePair<string, float>>();
-        private readonly List<string> _overlayMemBarLabels = new List<string>();
-        private string _memTitle = string.Empty;
-        private readonly List<KeyValuePair<string, KeyValuePair<int, float>>> _overlayHitchBars = new List<KeyValuePair<string, KeyValuePair<int, float>>>();
-        private readonly List<string> _overlayHitchLabels = new List<string>();
-        private string _hitchTitle = string.Empty;
         private bool _hitchSuspectNotified;
+        private readonly OverlayPanel _panel = new OverlayPanel();
+        private SessionLog _sessionLog;
+        private float _diagStartedAt = -1f;
         private readonly WaitForEndOfFrame _endOfFrame = new WaitForEndOfFrame();
         private string _lastMemSuspectKey = string.Empty;
         private readonly HashSet<string> _memNotifiedThisRaid = new HashSet<string>();
-        private string _overlayWidthFor;
-        private float _overlayTextWidth;
         private float _leakNext = -1f;
         private float _leakPendingSince = -1f;
 
@@ -132,8 +121,6 @@ namespace CactusPie.RamCleanerInterval
         private string _lastTrimResult = "아직 없음";
         private string _lastAssetResult = "아직 없음";
         private string _statusText = "측정 중...";
-        private string _overlayText = string.Empty;
-        private GUIStyle _overlayStyle;
 
         internal void Awake()
         {
@@ -156,6 +143,14 @@ namespace CactusPie.RamCleanerInterval
 
             BindSettings();
             StartCoroutine(EndOfFrameLoop());
+
+            _sessionLog = new SessionLog(Logger);
+            BepInEx.Logging.Logger.Listeners.Add(_sessionLog);
+            _diagMode.SettingChanged += (_, __) => OnDiagChanged();
+            if (_diagMode.Value)
+            {
+                _diagStartedAt = 0f;
+            }
             _unloadAuto.SettingChanged += (_, __) => s_autoUnloadUselessThisSession = false;
 
             GarbageCollector.GCModeChanged += OnGcModeChanged;
@@ -171,6 +166,11 @@ namespace CactusPie.RamCleanerInterval
             GarbageCollector.GCModeChanged -= OnGcModeChanged;
             _combat.Unbind();
             _vram.Dispose();
+            if (_sessionLog != null)
+            {
+                BepInEx.Logging.Logger.Listeners.Remove(_sessionLog);
+                _sessionLog.Dispose();
+            }
         }
 
         internal void Update()
@@ -183,6 +183,10 @@ namespace CactusPie.RamCleanerInterval
             }
 
             CheckHitch(now);
+            if (_diagHotkey.Value.IsDown())
+            {
+                _diagMode.Value = !_diagMode.Value;
+            }
             _frames.Tick(_inGame && _raidStartedAt >= 0f && now - _raidStartedAt > 5f);
             _profiler.CountFrame();
             TickProfilerInstall(now);
@@ -782,7 +786,7 @@ namespace CactusPie.RamCleanerInterval
 
         private void EvaluateModObjects(float now)
         {
-            if (!_objectsEnabled.Value || _raidStartedAt < 0f || now < _objectsNext)
+            if (!ObjectsOn || _raidStartedAt < 0f || now < _objectsNext)
             {
                 _objectsPendingSince = -1f;
                 return;
@@ -852,7 +856,100 @@ namespace CactusPie.RamCleanerInterval
             }
         }
 
-        private bool HitchModTrackingOn => _hitchEnabled.Value && _hitchModTracking.Value && _profilerEnabled.Value;
+        private bool HitchModTrackingOn => _hitchEnabled.Value && _profilerEnabled.Value && (_hitchModTracking.Value || _diagMode.Value);
+
+        private bool OverlayOn => _showOverlay.Value || _diagMode.Value;
+
+        private bool LeakOn => _leakEnabled.Value || (_diagMode.Value && _diagHeavy.Value);
+
+        private bool ObjectsOn => _objectsEnabled.Value || (_diagMode.Value && _diagHeavy.Value);
+
+        // ---------------------------------------------------------------- Diagnostic mode (one key / one button)
+
+        private void OnDiagChanged()
+        {
+            float now = Time.realtimeSinceStartup;
+            if (_diagMode.Value)
+            {
+                _diagStartedAt = now;
+                if (_inGame && _raidStartedAt >= 0f)
+                {
+                    _profilerNext = now; // start measuring right away
+                    if (LeakOn && _leakNext < 0f)
+                    {
+                        _leakNext = now;
+                    }
+                }
+
+                string start = $"=== 원인 추적 시작 {DateTime.Now:HH:mm:ss} (화면 표시 + 모드별 상시 측정 + 끊김 원인 추적" +
+                               (_diagHeavy.Value ? " + 누수 추적·오브젝트 수" : string.Empty) + ") ===";
+                _sessionLog?.WriteBlock(start);
+                Logger.LogInfo("Diagnostic mode ON");
+                Notify($"RAM 클리너: 원인 추적 시작 — {_diagHotkey.Value} 로 끄기", false);
+                return;
+            }
+
+            string summary = BuildDiagSummary(now);
+            _sessionLog?.WriteBlock(summary);
+            Logger.LogInfo("Diagnostic mode OFF");
+            _diagStartedAt = -1f;
+            Notify("RAM 클리너: 원인 추적 종료 — 요약은 전용 로그(BepInEx\\RamCleaner)에 저장", false);
+        }
+
+        private string BuildDiagSummary(float now)
+        {
+            var sb = new StringBuilder();
+            float minutes = _diagStartedAt >= 0f ? (now - _diagStartedAt) / 60f : 0f;
+            sb.Append($"=== 원인 추적 종료 {DateTime.Now:HH:mm:ss} ({minutes:0}분) — 요약 ===\n");
+            sb.Append($"FPS: 지금 {_frames.CurrentFps:0}, 레이드 평균 {_frames.AverageFps:0}, 1% 저점 {_frames.OnePercentLowFps():0}\n");
+            if (_profiler.LastResult.Count > 0)
+            {
+                sb.Append("모드별 부하(프레임당 ms): ")
+                  .Append(string.Join(", ", _profiler.LastResult.Take(8).Select(kv => $"{kv.Key} {kv.Value:0.00}")))
+                  .Append($" / 프레임 {_profiler.LastFrameMs:0.0}ms\n");
+            }
+
+            if (_profiler.LastAlloc.Count > 0)
+            {
+                sb.Append($"모드별 메모리 생성(MB/분, {_profiler.AllocMethod}): ")
+                  .Append(string.Join(", ", _profiler.LastAlloc.Take(8).Select(kv => $"{kv.Key} {kv.Value:0}"))).Append('\n');
+            }
+
+            List<KeyValuePair<string, KeyValuePair<int, float>>> causes = _hitch.Causes();
+            if (causes.Count > 0)
+            {
+                sb.Append($"끊김 원인({_hitch.Count}회): ")
+                  .Append(string.Join(", ", causes.Select(c => $"{c.Key} {c.Value.Key}회(최대 {c.Value.Value:0}ms)"))).Append('\n');
+            }
+
+            double slope = GcFloorSlopeMbPerMin();
+            if (!double.IsNaN(slope))
+            {
+                sb.Append($"GC 뒤 남는 관리 메모리: 분당 {slope:+0;-0}MB\n");
+            }
+
+            double perDeath = RecentPerDeathMb();
+            if (perDeath >= 0)
+            {
+                sb.Append($"사망 1명당 메모리(최근): {perDeath:0}MB\n");
+            }
+
+            sb.Append("의심: ");
+            var suspects = new List<string>();
+            if (_profiler.Suspect != null)
+            {
+                suspects.Add("프레임 — " + _profiler.Suspect);
+            }
+
+            if (_hitch.Suspect != null)
+            {
+                suspects.Add("끊김 — " + _hitch.Suspect);
+            }
+
+            suspects.AddRange(_memSuspects);
+            sb.Append(suspects.Count > 0 ? string.Join(" / ", suspects) : "없음");
+            return sb.ToString();
+        }
 
         private void EvaluateHitchSuspect()
         {
@@ -945,7 +1042,7 @@ namespace CactusPie.RamCleanerInterval
 
         private void EvaluateLeak(float now)
         {
-            if (!_inGame || !_leakEnabled.Value || _leakNext < 0f || now < _leakNext)
+            if (!_inGame || !LeakOn || _leakNext < 0f || now < _leakNext)
             {
                 _leakPendingSince = -1f;
                 return;
@@ -1316,7 +1413,7 @@ namespace CactusPie.RamCleanerInterval
                 sb.Append("-> ").Append(suspectLine).Append('\n');
             }
 
-            if (_objectsEnabled.Value)
+            if (ObjectsOn)
             {
                 sb.Append("모드별 오브젝트: ").Append(_objects.LastSummary).Append('\n');
             }
@@ -1364,15 +1461,19 @@ namespace CactusPie.RamCleanerInterval
                 sb.Append("마지막 레이드 결산: ").Append(_lastReport).Append('\n');
             }
 
-            sb.Append("누수 추적: ").Append(_leakEnabled.Value || _leak.Snapshots > 0 ? _leak.LastSummary : "꺼짐");
+            sb.Append("누수 추적: ").Append(LeakOn || _leak.Snapshots > 0 ? _leak.LastSummary : "꺼짐").Append('\n');
+            sb.Append("원인 추적 모드: ").Append(_diagMode.Value ? $"켜짐 ({(Time.realtimeSinceStartup - Math.Max(0f, _diagStartedAt)) / 60f:0}분째)" : "꺼짐")
+              .Append($" — 단축키 {_diagHotkey.Value}\n");
+            sb.Append("전용 로그: ").Append(_sessionLog?.FilePath ?? "만들 수 없음");
             _statusText = sb.ToString();
 
-            if (_showOverlay.Value)
+            if (OverlayOn)
             {
-                string vramText = vram >= 0 ? MemoryStats.Gb(vram) + "GB" : "?";
-                _overlayText = $"RAM 클리너 | 힙 {MemoryStats.Gb(s.MonoUsed)}GB · 네이티브 {MemoryStats.Gb(s.Native)}GB · " +
-                               $"VRAM {vramText} · 여유 {MemoryStats.Gb(s.SystemAvailable)}GB · GC {gcState}";
-                BuildOverlayExtras(now);
+                BuildOverlay(now, s, gcState, vram);
+            }
+            else
+            {
+                _panel.Begin();
             }
         }
 
@@ -1412,98 +1513,125 @@ namespace CactusPie.RamCleanerInterval
             return _profiler.LastSummary;
         }
 
-        private void BuildOverlayExtras(float now)
+        /// <summary>Rebuilds the top-left panel (once per second): one titled section per topic.</summary>
+        private void BuildOverlay(float now, MemorySnapshot s, string gcState, long vram)
         {
-            _fpsText = _overlayFps.Value
-                ? $"FPS {_frames.CurrentFps:0}" +
-                  (_frames.Frames > 0 ? $" · 평균 {_frames.AverageFps:0} · 1% 저점 {_frames.OnePercentLowFps():0}" : string.Empty) +
-                  (_hitchEnabled.Value && _inGame ? $" · 끊김 {_hitch.Count}회" : string.Empty)
-                : string.Empty;
+            _panel.Begin();
 
-            _overlayBars.Clear();
-            _overlayBarLabels.Clear();
-            _modTitle = string.Empty;
-            _suspectText = null;
-            if (!_overlayMods.Value || !_profilerEnabled.Value)
+            if (_diagMode.Value)
+            {
+                float minutes = (now - Math.Max(0f, _diagStartedAt)) / 60f;
+                _panel.Header($"● 원인 추적 중 — {_diagHotkey.Value} 로 끄기", OverlayPanel.Yellow, $"{minutes:0}분째");
+            }
+
+            // --- memory
+            _panel.Header("메모리", OverlayPanel.Blue, $"GC {gcState}");
+            string vramText = vram >= 0 ? MemoryStats.Gb(vram) : "?";
+            _panel.Text($"힙 {MemoryStats.Gb(s.MonoUsed)} · 네이티브 {MemoryStats.Gb(s.Native)} · VRAM {vramText} · 시스템 여유 {MemoryStats.Gb(s.SystemAvailable)} (GB)");
+            if (_inGame)
+            {
+                double slope = GcFloorSlopeMbPerMin();
+                double perDeath = RecentPerDeathMb();
+                string extra = (perDeath >= 0 ? $"사망당 {perDeath:0}MB" : "사망당 -") +
+                               (!double.IsNaN(slope) ? $" · GC 뒤 남는 양 {slope:+0;-0}MB/분" : string.Empty);
+                _panel.Text(extra, OverlayPanel.Dim);
+            }
+
+            for (int i = 0; i < _memSuspects.Count; i++)
+            {
+                _panel.Text(_memSuspects[i], OverlayPanel.Red);
+            }
+
+            // --- frames
+            if (_overlayFps.Value)
+            {
+                _panel.Header("프레임", OverlayPanel.Green, _hitchEnabled.Value && _inGame ? $"끊김 {_hitch.Count}회" : null);
+                _panel.Text($"FPS {_frames.CurrentFps:0}" +
+                            (_frames.Frames > 0 ? $"  ·  평균 {_frames.AverageFps:0}  ·  1% 저점 {_frames.OnePercentLowFps():0}" : string.Empty));
+            }
+
+            if (!_profilerEnabled.Value)
             {
                 return;
             }
 
-            if (_profiler.Measuring)
+            // --- per-mod frame cost
+            if (_overlayMods.Value)
             {
-                _modTitle = $"모드별 부하: 측정 중 {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value}초";
-            }
-            else if (_profiler.LastResultTime >= 0f)
-            {
-                float minutes = (now - _profiler.LastResultTime) / 60f;
-                _modTitle = $"모드별 부하 (프레임당 ms, {(minutes < 1f ? "방금" : minutes.ToString("0") + "분 전")} 측정 · 프레임 {_profiler.LastFrameMs:0.0}ms)";
-            }
-            else
-            {
-                _modTitle = "모드별 부하: " + DescribeProfilerState();
-            }
-
-            for (int i = 0; i < Math.Min(_overlayModCount.Value, _profiler.LastResult.Count); i++)
-            {
-                KeyValuePair<string, float> bar = _profiler.LastResult[i];
-                _overlayBars.Add(bar);
-                _overlayBarLabels.Add($"{bar.Value:0.0}ms");
-            }
-
-            _suspectText = _profiler.Suspect != null ? "프레임 의심: " + _profiler.Suspect : null;
-            BuildOverlayMemory(now);
-            BuildOverlayHitches();
-        }
-
-        private void BuildOverlayHitches()
-        {
-            _overlayHitchBars.Clear();
-            _overlayHitchLabels.Clear();
-            _hitchTitle = string.Empty;
-            if (!_overlayHitch.Value || !_hitchEnabled.Value || !_inGame || _hitch.Count == 0)
-            {
-                return;
-            }
-
-            _hitchTitle = $"끊김 원인 (이번 레이드 {_hitch.Count}회, {_hitchThresholdMs.Value}ms 이상)" +
-                          (HitchModTrackingOn ? string.Empty : " · 모드 추적 꺼짐");
-            foreach (KeyValuePair<string, KeyValuePair<int, float>> cause in _hitch.Causes())
-            {
-                if (_overlayHitchBars.Count >= _overlayModCount.Value)
+                string when = _profiler.Measuring && _profiler.LastResultTime < 0f
+                    ? $"측정 중 {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value}초"
+                    : _profiler.LastResultTime >= 0f
+                        ? ((now - _profiler.LastResultTime) < 60f ? "방금" : $"{(now - _profiler.LastResultTime) / 60f:0}분 전") + $" · 프레임 {_profiler.LastFrameMs:0.0}ms"
+                        : DescribeProfilerState();
+                _panel.Header("모드별 부하 (프레임당 ms)", OverlayPanel.Yellow, when);
+                float scale = 4f;
+                int count = Math.Min(_overlayModCount.Value, _profiler.LastResult.Count);
+                for (int i = 0; i < count; i++)
                 {
-                    break;
+                    scale = Math.Max(scale, _profiler.LastResult[i].Value);
                 }
 
-                _overlayHitchBars.Add(cause);
-                _overlayHitchLabels.Add($"{cause.Value.Key}회 · 최대 {cause.Value.Value:0}ms");
-            }
-        }
+                for (int i = 0; i < count; i++)
+                {
+                    KeyValuePair<string, float> bar = _profiler.LastResult[i];
+                    float share = _profiler.LastFrameMs > 0f ? bar.Value / _profiler.LastFrameMs : 0f;
+                    bool suspect = _profiler.Suspect != null && _profiler.Suspect.StartsWith(bar.Key, StringComparison.Ordinal);
+                    _panel.Bar(bar.Key, bar.Value / scale, $"{bar.Value:0.0}ms ({share * 100f:0}%)",
+                        suspect ? OverlayPanel.Red : share >= 0.08f ? OverlayPanel.Yellow : OverlayPanel.Green);
+                }
 
-        private void BuildOverlayMemory(float now)
-        {
-            _overlayMemBars.Clear();
-            _overlayMemBarLabels.Clear();
-            _memTitle = string.Empty;
-            if (!IsOverlayMemoryOn())
+                if (_profiler.Suspect != null)
+                {
+                    _panel.Text("의심: " + _profiler.Suspect, OverlayPanel.Red);
+                }
+            }
+
+            // --- per-mod memory creation
+            if (_overlayMem.Value && _memSuspectEnabled.Value && _profiler.LastAlloc.Count > 0)
             {
-                return;
+                _panel.Header("모드별 메모리 생성 (MB/분)", OverlayPanel.Blue, $"합계 {_profiler.LastAllocTotal:0}MB/분");
+                float scale = 50f;
+                int count = Math.Min(_overlayModCount.Value, _profiler.LastAlloc.Count);
+                for (int i = 0; i < count; i++)
+                {
+                    scale = Math.Max(scale, _profiler.LastAlloc[i].Value);
+                }
+
+                float total = Math.Max(0.01f, _profiler.LastAllocTotal);
+                for (int i = 0; i < count; i++)
+                {
+                    KeyValuePair<string, float> bar = _profiler.LastAlloc[i];
+                    bool suspect = _profiler.AllocSuspect != null && _profiler.AllocSuspect.StartsWith(bar.Key, StringComparison.Ordinal);
+                    _panel.Bar(bar.Key, bar.Value / scale, $"{bar.Value:0}MB/분",
+                        suspect ? OverlayPanel.Red : bar.Value / total >= 0.25f ? OverlayPanel.Yellow : OverlayPanel.Blue);
+                }
             }
 
-            double slope = GcFloorSlopeMbPerMin();
-            double perDeath = RecentPerDeathMb();
-            _memTitle = "모드별 메모리 생성 (MB/분)" +
-                        (!double.IsNaN(slope) ? $" · GC 뒤 남는 양 {slope:+0;-0}MB/분" : string.Empty) +
-                        (perDeath >= 0 ? $" · 사망당 {perDeath:0}MB" : string.Empty);
-            for (int i = 0; i < Math.Min(_overlayModCount.Value, _profiler.LastAlloc.Count); i++)
+            // --- hitch causes
+            if (_overlayHitch.Value && _hitchEnabled.Value && _inGame && _hitch.Count > 0)
             {
-                _overlayMemBars.Add(_profiler.LastAlloc[i]);
-                _overlayMemBarLabels.Add($"{_profiler.LastAlloc[i].Value:0}MB/분");
-            }
-        }
+                _panel.Header("끊김 원인 (이번 레이드)", OverlayPanel.Purple,
+                    $"{_hitch.Count}회 · {_hitchThresholdMs.Value}ms 이상" + (HitchModTrackingOn ? string.Empty : " · 모드 추적 꺼짐"));
+                List<KeyValuePair<string, KeyValuePair<int, float>>> causes = _hitch.Causes();
+                int most = 1;
+                foreach (KeyValuePair<string, KeyValuePair<int, float>> cause in causes)
+                {
+                    most = Math.Max(most, cause.Value.Key);
+                }
 
-        private bool IsOverlayMemoryOn()
-        {
-            return _overlayMem.Value && _memSuspectEnabled.Value && _inGame;
+                for (int i = 0; i < Math.Min(_overlayModCount.Value, causes.Count); i++)
+                {
+                    KeyValuePair<string, KeyValuePair<int, float>> cause = causes[i];
+                    bool suspect = _hitch.Suspect != null && _hitch.Suspect.StartsWith(cause.Key, StringComparison.Ordinal);
+                    _panel.Bar(cause.Key, cause.Value.Key / (float)most, $"{cause.Value.Key}회 · 최대 {cause.Value.Value:0}ms",
+                        suspect ? OverlayPanel.Red : cause.Key == HitchMonitor.CauseGame ? OverlayPanel.Gray : OverlayPanel.Purple);
+                }
+
+                if (_hitch.Suspect != null)
+                {
+                    _panel.Text("의심: " + _hitch.Suspect, OverlayPanel.Red);
+                }
+            }
         }
 
         private void ManualButtonsDrawer(ConfigEntryBase entry)
@@ -1530,6 +1658,11 @@ namespace CactusPie.RamCleanerInterval
             {
                 RunLeakSnapshot("manual");
             }
+
+            if (GUILayout.Button(_diagMode.Value ? "원인 추적 끄기" : "원인 추적 켜기", GUILayout.ExpandWidth(true)))
+            {
+                _diagMode.Value = !_diagMode.Value;
+            }
         }
 
         private void StatusDrawer(ConfigEntryBase entry)
@@ -1539,171 +1672,12 @@ namespace CactusPie.RamCleanerInterval
 
         internal void OnGUI()
         {
-            if (!_showOverlay.Value || _overlayText.Length == 0 || Event.current.type != EventType.Repaint)
+            if (!OverlayOn || Event.current.type != EventType.Repaint)
             {
                 return;
             }
 
-            if (_overlayStyle == null)
-            {
-                _overlayStyle = new GUIStyle(GUI.skin.box);
-                _overlayLabelStyle = new GUIStyle(GUI.skin.label)
-                {
-                    fontSize = 13,
-                    alignment = TextAnchor.MiddleLeft,
-                    wordWrap = false,
-                    clipping = TextClipping.Clip,
-                };
-                _overlayLabelStyle.normal.textColor = Color.white;
-            }
-
-            const float x = 6f;
-            const float lineHeight = 18f;
-            const float nameWidth = 170f;
-            const float barWidth = 220f;
-            const float valueWidth = 60f;
-            if (!ReferenceEquals(_overlayWidthFor, _overlayText))
-            {
-                _overlayWidthFor = _overlayText;
-                _overlayTextWidth = _overlayLabelStyle.CalcSize(new GUIContent(_overlayText)).x;
-            }
-
-            float width = Mathf.Max(nameWidth + barWidth + valueWidth + 16f, _overlayTextWidth + 12f);
-
-            int lines = 1 + (_fpsText.Length > 0 ? 1 : 0) + (_modTitle.Length > 0 ? 1 + _overlayBars.Count : 0) + (_suspectText != null ? 1 : 0) +
-                        (_memTitle.Length > 0 ? 1 + _overlayMemBars.Count : 0) + (_overlayMem.Value ? _memSuspects.Count : 0) +
-                        (_hitchTitle.Length > 0 ? 1 + _overlayHitchBars.Count + (_hitch.Suspect != null ? 1 : 0) : 0);
-            GUI.Box(new Rect(x, 6f, width, lines * lineHeight + 8f), GUIContent.none, _overlayStyle);
-
-            float y = 10f;
-            GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _overlayText, _overlayLabelStyle);
-            y += lineHeight;
-
-            if (_fpsText.Length > 0)
-            {
-                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _fpsText, _overlayLabelStyle);
-                y += lineHeight;
-            }
-
-            if (_modTitle.Length > 0)
-            {
-                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _modTitle, _overlayLabelStyle);
-                y += lineHeight;
-
-                // Scale: the biggest bar fills the width, but never zoom in past 4 ms so tiny costs look tiny.
-                float scale = 4f;
-                for (int i = 0; i < _overlayBars.Count; i++)
-                {
-                    scale = Mathf.Max(scale, _overlayBars[i].Value);
-                }
-
-                Color previous = GUI.color;
-                for (int i = 0; i < _overlayBars.Count; i++)
-                {
-                    KeyValuePair<string, float> bar = _overlayBars[i];
-                    float frameShare = _profiler.LastFrameMs > 0f ? bar.Value / _profiler.LastFrameMs : 0f;
-                    bool suspect = _suspectText != null && _suspectText.Contains(bar.Key);
-                    GUI.color = Color.white;
-                    GUI.Label(new Rect(x + 6f, y, nameWidth, lineHeight), bar.Key, _overlayLabelStyle);
-
-                    GUI.color = new Color(1f, 1f, 1f, 0.15f);
-                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth, lineHeight - 8f), Texture2D.whiteTexture);
-                    GUI.color = suspect ? new Color(0.95f, 0.25f, 0.2f) : frameShare >= 0.08f ? new Color(0.95f, 0.75f, 0.2f) : new Color(0.3f, 0.85f, 0.4f);
-                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth * Mathf.Clamp01(bar.Value / scale), lineHeight - 8f), Texture2D.whiteTexture);
-
-                    GUI.color = Color.white;
-                    GUI.Label(new Rect(x + 10f + nameWidth + barWidth, y, valueWidth, lineHeight), _overlayBarLabels[i], _overlayLabelStyle);
-                    y += lineHeight;
-                }
-
-                GUI.color = previous;
-            }
-
-            if (_suspectText != null)
-            {
-                DrawRedLine(x, ref y, width, lineHeight, _suspectText);
-            }
-
-            if (_memTitle.Length > 0)
-            {
-                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _memTitle, _overlayLabelStyle);
-                y += lineHeight;
-                float scale = 50f;
-                for (int i = 0; i < _overlayMemBars.Count; i++)
-                {
-                    scale = Mathf.Max(scale, _overlayMemBars[i].Value);
-                }
-
-                float total = Mathf.Max(0.01f, _profiler.LastAllocTotal);
-                Color previous = GUI.color;
-                for (int i = 0; i < _overlayMemBars.Count; i++)
-                {
-                    KeyValuePair<string, float> bar = _overlayMemBars[i];
-                    bool suspect = _profiler.AllocSuspect != null && _profiler.AllocSuspect.Contains(bar.Key);
-                    GUI.color = Color.white;
-                    GUI.Label(new Rect(x + 6f, y, nameWidth, lineHeight), bar.Key, _overlayLabelStyle);
-                    GUI.color = new Color(1f, 1f, 1f, 0.15f);
-                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth, lineHeight - 8f), Texture2D.whiteTexture);
-                    GUI.color = suspect ? new Color(0.95f, 0.25f, 0.2f) : bar.Value / total >= 0.25f ? new Color(0.95f, 0.75f, 0.2f) : new Color(0.35f, 0.65f, 0.95f);
-                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth * Mathf.Clamp01(bar.Value / scale), lineHeight - 8f), Texture2D.whiteTexture);
-                    GUI.color = Color.white;
-                    GUI.Label(new Rect(x + 10f + nameWidth + barWidth, y, valueWidth + 20f, lineHeight), _overlayMemBarLabels[i], _overlayLabelStyle);
-                    y += lineHeight;
-                }
-
-                GUI.color = previous;
-            }
-
-            if (_overlayMem.Value)
-            {
-                for (int i = 0; i < _memSuspects.Count; i++)
-                {
-                    DrawRedLine(x, ref y, width, lineHeight, _memSuspects[i]);
-                }
-            }
-
-            if (_hitchTitle.Length > 0)
-            {
-                GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), _hitchTitle, _overlayLabelStyle);
-                y += lineHeight;
-                int most = 1;
-                for (int i = 0; i < _overlayHitchBars.Count; i++)
-                {
-                    most = Math.Max(most, _overlayHitchBars[i].Value.Key);
-                }
-
-                Color previous = GUI.color;
-                for (int i = 0; i < _overlayHitchBars.Count; i++)
-                {
-                    KeyValuePair<string, KeyValuePair<int, float>> bar = _overlayHitchBars[i];
-                    bool suspect = _hitch.Suspect != null && _hitch.Suspect.StartsWith(bar.Key, StringComparison.Ordinal);
-                    bool game = bar.Key == HitchMonitor.CauseGame;
-                    GUI.color = Color.white;
-                    GUI.Label(new Rect(x + 6f, y, nameWidth, lineHeight), bar.Key, _overlayLabelStyle);
-                    GUI.color = new Color(1f, 1f, 1f, 0.15f);
-                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth, lineHeight - 8f), Texture2D.whiteTexture);
-                    GUI.color = suspect ? new Color(0.95f, 0.25f, 0.2f) : game ? new Color(0.6f, 0.6f, 0.6f) : new Color(0.75f, 0.5f, 0.95f);
-                    GUI.DrawTexture(new Rect(x + 6f + nameWidth, y + 4f, barWidth * Mathf.Clamp01(bar.Value.Key / (float)most), lineHeight - 8f), Texture2D.whiteTexture);
-                    GUI.color = Color.white;
-                    GUI.Label(new Rect(x + 10f + nameWidth + barWidth, y, valueWidth + 60f, lineHeight), _overlayHitchLabels[i], _overlayLabelStyle);
-                    y += lineHeight;
-                }
-
-                GUI.color = previous;
-                if (_hitch.Suspect != null)
-                {
-                    DrawRedLine(x, ref y, width, lineHeight, "끊김 의심: " + _hitch.Suspect);
-                }
-            }
-        }
-
-        private void DrawRedLine(float x, ref float y, float width, float lineHeight, string text)
-        {
-            Color previous = _overlayLabelStyle.normal.textColor;
-            _overlayLabelStyle.normal.textColor = new Color(1f, 0.4f, 0.35f);
-            GUI.Label(new Rect(x + 6f, y, width - 12f, lineHeight), text, _overlayLabelStyle);
-            _overlayLabelStyle.normal.textColor = previous;
-            y += lineHeight;
+            _panel.Draw(6f, 6f);
         }
     }
 }
