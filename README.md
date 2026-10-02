@@ -18,6 +18,15 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 변경 이력
 
+- 2026-10-03 00:54 (KST) — **v2.10.0: 실전 로그(55분 SAIN 시뮬) 반영 — 오판·로그 반복 수정, 레이드 후 남는 메모리 측정**
+  - 확인됨: 레이드 후 메뉴 정리로 시스템 여유 **14.7 → 46.5GB** 회복. 게임 자체 정리 뒤에도 남아 있던 에셋을 추가로 4.6GB(VRAM 3.8GB) 비움
+  - **"점점 늘어남" 오판 수정:** 첫 측정이 레이드 시작 직후(봇이 움직이기 전, SAIN 0MB/분)라 이후 모든 측정이 "2배 이상 증가"로 잡혔음 →
+    비교 기준을 **레이드 3분 시점** 측정으로 바꾸고, 기준이 너무 작으면(0.5ms·5MB/분 미만) 최소값으로 계산
+  - **메모리 의심 로그 반복 수정:** 기준선 근처에서 의심이 켜졌다 꺼졌다 하며 한 판에 118줄 기록됐음 → 같은 종류·같은 모드는 레이드당 한 번만 기록
+    (화면·F12에는 실시간 값 그대로)
+  - **새 기능: 레이드 후에도 남는 관리 메모리** — 레이드 후 메뉴 GC가 끝난 뒤 관리 메모리를 레이드 전과 비교(이번 로그: +0.8GB).
+    500MB 넘게 남으면 "어떤 모드가 지난 레이드 데이터를 붙잡고 있음"으로 경고. 레이드를 반복할수록 쌓이는 종류라 긴 세션이면 가끔 재시작 권장.
+    로그 `[after raid]`, F12 '현재 상태'의 "레이드 후 남은 메모리"
 - 2026-10-02 14:15 (KST) — **v2.9.0: 레이드 끝난 뒤 '시스템 여유'가 늦게 돌아오던 문제 + 끊김 원인 판정 수정**
   - **레이드 끝난 뒤 메뉴에서 정리 (05번, 기본 켬):** 메뉴로 돌아와 20초 뒤 GC → 안 쓰는 에셋 정리 → 워킹셋 정리를 한 번 실행.
     레이드 동안 커진 게임 메모리(로그상 워킹셋 28GB, 관리 힙 6.5GB — 이 힙은 한 번 커지면 스스로 안 줄어듦)를 윈도우에 바로 돌려줌.
@@ -158,7 +167,7 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 설치
 
-1. `release\RamCleanerInterval-2.9.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
+1. `release\RamCleanerInterval-2.10.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
    `BepInEx\plugins\CactusPie.RamCleanerInterval\CactusPie.RamCleanerInterval.dll`로 들어갑니다.
 2. **예전 버전 DLL이 `BepInEx\plugins\`에 있으면 지우세요.**
 3. **SPTVRAMCleaner를 쓰고 있었다면 빼세요.** 이 모드에 같은 기능(개선판)이 들어 있어서, 둘 다 있으면 레이드 시작 때 두 번 정리합니다.
@@ -305,6 +314,7 @@ SAIN이 쓰는 것입니다. 봇이 많을수록 봇 AI 모드 숫자가 커지�
 | 의심 기준: 모드 메모리 생성 (MB/분) | 50 | 한 모드가 이만큼 넘게 + 전체의 40% 이상 (또는 레이드 초반의 2배) |
 | 의심 기준: GC 뒤 남는 양 (MB/분) | 10 | GC 3회·10분 이상 쌓인 뒤 판정 |
 | 의심 기준: 사망 1명당 메모리 (MB) | 200 | 최근 사망 10명 기준. 참고: APBS 수정 전 280~340MB, 후 60~75MB |
+| 의심 기준: 레이드 후에도 남는 관리 메모리 (MB) | 500 | 레이드 후 메뉴 GC 뒤 관리 메모리가 레이드 전보다 이만큼 넘게 많으면 경고 |
 | 게임 알림으로 표시 | 켬 | 종류별로 레이드당 한 번 |
 
 **읽는 법:**
@@ -352,7 +362,7 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 ## 직접 빌드
 
 - 루트의 `build.bat` 더블클릭 → Release 빌드, `E:\SPT 4.1\BepInEx\plugins\CactusPie.RamCleanerInterval\`로 자동 복사,
-  `release\RamCleanerInterval-2.9.0-SPT4.1.zip` 생성.
+  `release\RamCleanerInterval-2.10.0-SPT4.1.zip` 생성.
 - SPT 경로가 다르면 `src\RamCleaner.local.props.example`을 `src\RamCleaner.local.props`로 복사해서 경로를 고치세요.
 - 필요한 것: .NET SDK 8 이상. 참조는 SPT 설치 폴더의 `EscapeFromTarkov_Data\Managed`와 `BepInEx\core`에서 가져옵니다
   (`spt-reflection`은 쓰지 않습니다. `0Harmony`는 BepInEx\core의 것을 참조하며, 모드별 부하 분석이 다른 모드 함수에 측정 장치를 붙일 때만 씁니다 — 게임 동작은 바꾸지 않습니다).

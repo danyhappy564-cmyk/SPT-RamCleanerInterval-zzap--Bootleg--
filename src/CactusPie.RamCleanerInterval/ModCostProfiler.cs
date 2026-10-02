@@ -428,8 +428,17 @@ namespace CactusPie.RamCleanerInterval
 
         // ------------------------------------------------------------------ measuring windows
 
+        // The "got slower / allocates more than early in the raid" comparison needs a baseline taken once bots are
+        // actually doing things: the very first window (right at the countdown) read SAIN 0 MB/min, which made every
+        // later window look like "growing" (2026-10-02 log).
+        private const float BaselineAfterSeconds = 180f;
+        private const float MinBaselineMs = 0.5f;
+        private const float MinBaselineAllocMb = 5f;
+        private float _raidResetTime;
+
         public void ResetRaid()
         {
+            _raidResetTime = Time.realtimeSinceStartup;
             _firstWindowMs = null;
             _firstWindowAlloc = null;
             Suspect = null;
@@ -499,18 +508,22 @@ namespace CactusPie.RamCleanerInterval
                 Suspect = $"{result[0].Key} — 프레임의 {result[0].Value / LastFrameMs * 100f:0}% ({result[0].Value:0.0}ms)";
             }
 
+            bool baselineReady = Time.realtimeSinceStartup - _raidResetTime >= BaselineAfterSeconds;
             if (_firstWindowMs == null)
             {
-                _firstWindowMs = perMod;
+                if (baselineReady)
+                {
+                    _firstWindowMs = perMod;
+                }
             }
             else
             {
                 for (int i = 0; i < Math.Min(perMod.Length, _firstWindowMs.Length); i++)
                 {
-                    float before = _firstWindowMs[i];
+                    float before = Math.Max(_firstWindowMs[i], MinBaselineMs);
                     if (perMod[i] >= 1f && perMod[i] >= before * 2f && perMod[i] - before >= 1f)
                     {
-                        string grow = $"{ModRegistry.Name(i)} — 레이드 초반 {before:0.0}ms → 지금 {perMod[i]:0.0}ms (점점 느려짐)";
+                        string grow = $"{ModRegistry.Name(i)} — 레이드 3분 시점 {before:0.0}ms → 지금 {perMod[i]:0.0}ms (점점 느려짐)";
                         Suspect = Suspect == null ? grow : Suspect + " / " + grow;
                         break;
                     }
@@ -543,16 +556,19 @@ namespace CactusPie.RamCleanerInterval
 
             if (_firstWindowAlloc == null)
             {
-                _firstWindowAlloc = perModAlloc;
+                if (baselineReady)
+                {
+                    _firstWindowAlloc = perModAlloc;
+                }
             }
             else
             {
                 for (int i = 0; i < Math.Min(perModAlloc.Length, _firstWindowAlloc.Length); i++)
                 {
-                    float before = _firstWindowAlloc[i];
+                    float before = Math.Max(_firstWindowAlloc[i], MinBaselineAllocMb);
                     if (perModAlloc[i] >= allocSuspectMbPerMin / 2f && perModAlloc[i] >= before * 2f && perModAlloc[i] - before >= allocSuspectMbPerMin / 2f)
                     {
-                        string grow = $"{ModRegistry.Name(i)} — 메모리 생성 레이드 초반 {before:0}MB/분 → 지금 {perModAlloc[i]:0}MB/분 (점점 늘어남)";
+                        string grow = $"{ModRegistry.Name(i)} — 메모리 생성 레이드 3분 시점 {before:0}MB/분 → 지금 {perModAlloc[i]:0}MB/분 (점점 늘어남)";
                         AllocSuspect = AllocSuspect == null ? grow : AllocSuspect + " / " + grow;
                         break;
                     }

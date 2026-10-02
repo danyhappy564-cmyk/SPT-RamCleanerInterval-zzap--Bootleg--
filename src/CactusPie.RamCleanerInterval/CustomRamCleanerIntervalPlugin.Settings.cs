@@ -107,6 +107,7 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<int> _retainedSuspectMbPerMin;
         private ConfigEntry<int> _perDeathSuspectMb;
         private ConfigEntry<bool> _memSuspectNotify;
+        private ConfigEntry<int> _keptAfterRaidSuspectMb;
 
         private ConfigEntry<bool> _onlyInRaid;
         private ConfigEntry<bool> _showOverlay;
@@ -300,6 +301,11 @@ namespace CactusPie.RamCleanerInterval
             _perDeathSuspectMb = Bind(MemSuspectSection, MemSuspectCategory, "Per-death suspect (MB)", "의심 기준: 사망 1명당 메모리 (MB)", 200,
                 "최근 사망 10명 기준 1명당 메모리가 이보다 크면 '봇 장비 메모리 과다'로 표시합니다. 참고: APBS 수정 전 280~340MB, 후 60~75MB.",
                 new AcceptableValueRange<int>(50, 2000), 7);
+
+            _keptAfterRaidSuspectMb = Bind(MemSuspectSection, MemSuspectCategory, "Kept after raid suspect (MB)", "의심 기준: 레이드 후에도 남는 관리 메모리 (MB)", 500,
+                "레이드가 끝나고 메뉴에서 GC까지 한 뒤에도 관리 메모리가 레이드 전보다 이만큼 넘게 많으면 경고합니다(레이드 끝난 뒤 메뉴 정리가 켜져 있어야 측정). " +
+                "어떤 모드가 지난 레이드 데이터를 놓지 않는 것이라 레이드를 반복할수록 쌓입니다.",
+                new AcceptableValueRange<int>(100, 10000), 6);
 
             _memSuspectNotify = Bind(MemSuspectSection, MemSuspectCategory, "In-game notification", "게임 알림으로 표시", true,
                 "새 의심이 생기면 종류별로 레이드당 한 번 게임 알림을 띄웁니다.",

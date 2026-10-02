@@ -14,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.9.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.10.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -85,8 +85,13 @@ namespace CactusPie.RamCleanerInterval
         private float _postRaidNextLog = -1f;
         private long _postRaidFreeBefore;
         private readonly WaitForEndOfFrame _endOfFrame = new WaitForEndOfFrame();
-        private string _lastMemSuspectKey = string.Empty;
         private readonly HashSet<string> _memNotifiedThisRaid = new HashSet<string>();
+        private readonly HashSet<string> _memLoggedThisRaid = new HashSet<string>();
+
+        // Managed / native memory when the raid started loading, to show what is still held after the raid.
+        private long _monoBeforeRaid = -1;
+        private long _nativeBeforeRaid = -1;
+        private string _keptAfterRaid = "아직 없음";
         private float _leakNext = -1f;
         private float _leakPendingSince = -1f;
 
@@ -306,6 +311,35 @@ namespace CactusPie.RamCleanerInterval
             }
         }
 
+        /// <summary>
+        /// After the raid's objects are gone and a full GC ran, the managed heap should be back near its pre-raid size.
+        /// What is still there is held by something that outlives the raid (typically a static reference in a mod):
+        /// it adds up raid after raid. 2026-10-02: +0.8 GB after a 55-minute SAIN sim.
+        /// </summary>
+        private void ReportKeptAfterRaid()
+        {
+            if (_monoBeforeRaid <= 0 || _gc.LastUsedAfter <= 0)
+            {
+                return;
+            }
+
+            long kept = _gc.LastUsedAfter - _monoBeforeRaid;
+            _keptAfterRaid = $"{DateTime.Now:HH:mm} 관리 메모리 레이드 전보다 {(kept >= 0 ? "+" : "")}{MemoryStats.Gb(kept)}GB";
+            Logger.LogInfo($"[after raid] managed heap after GC {MemoryStats.Gb(_gc.LastUsedAfter)} GB vs {MemoryStats.Gb(_monoBeforeRaid)} GB " +
+                           $"before the raid ({(kept >= 0 ? "+" : "")}{MemoryStats.Gb(kept)} GB kept)");
+            if (kept >= (long)(_keptAfterRaidSuspectMb.Value * 1024L * 1024L))
+            {
+                string warning = $"레이드가 끝났는데도 관리 메모리 {MemoryStats.Gb(kept)}GB가 안 풀림 — 어떤 모드가 지난 레이드 데이터를 붙잡고 있음. " +
+                                 "레이드를 반복할수록 쌓이니 긴 세션이면 가끔 게임 재시작을 권장";
+                _keptAfterRaid += " (의심)";
+                Logger.LogWarning($"[mem suspect] {warning}");
+                if (_memSuspectNotify.Value)
+                {
+                    Notify(warning, true);
+                }
+            }
+        }
+
         private void PostRaidAssets()
         {
             _postRaid = PostRaidPhase.Assets;
@@ -348,6 +382,8 @@ namespace CactusPie.RamCleanerInterval
                 _postRaid = PostRaidPhase.None;
                 _postRaidLogUntil = -1f;
                 _warnedNoIncremental = false;
+                _monoBeforeRaid = MemoryStats.MonoUsed();
+                _nativeBeforeRaid = _snapshot.Native;
                 Logger.LogInfo($"Raid loading: GC mode {GarbageCollector.GCMode}, incremental={GarbageCollector.isIncremental}, " +
                                $"mono used {MemoryStats.Gb(MemoryStats.MonoUsed())} GB");
             }
@@ -407,7 +443,7 @@ namespace CactusPie.RamCleanerInterval
             _gcFloors.Clear();
             _memSuspects.Clear();
             _memNotifiedThisRaid.Clear();
-            _lastMemSuspectKey = string.Empty;
+            _memLoggedThisRaid.Clear();
             _objects.Reset();
             _profilerNext = HitchModTrackingOn ? now : now + 60f;
             _hitchSuspectNotified = false;
@@ -504,6 +540,7 @@ namespace CactusPie.RamCleanerInterval
         {
             if (_postRaid == PostRaidPhase.Gc)
             {
+                ReportKeptAfterRaid();
                 PostRaidAssets();
             }
 
@@ -1308,20 +1345,19 @@ namespace CactusPie.RamCleanerInterval
                 _memSuspects.Add("오브젝트 증가 의심: " + _objects.Suspect);
             }
 
-            // Log/notify when the set of suspects changes, not when their numbers move (per-death MB changes every second).
-            // Numbers stripped: "SAIN 42MB/min" -> "SAIN #MB/min" is the same suspect as last window.
-            string key = System.Text.RegularExpressions.Regex.Replace(
-                string.Join("|", _memSuspects.Select(line => line.Substring(0, Math.Min(6, line.Length)))) +
-                "|" + _profiler.AllocSuspect + "|" + _objects.Suspect, @"[0-9.]+", "#");
-            if (key == _lastMemSuspectKey)
-            {
-                return;
-            }
-
-            _lastMemSuspectKey = key;
+            // Log each suspect once per raid: same kind + same mod, numbers ignored. Suspects that flicker on and off
+            // around a threshold were logged 118 times in one raid otherwise (2026-10-02 log); the overlay and F12
+            // still show the live value.
             foreach (string line in _memSuspects)
             {
                 string kind = line.Substring(0, Math.Min(6, line.Length));
+                string identity = System.Text.RegularExpressions.Regex.Replace(
+                    line.Split(new[] { " — " }, StringSplitOptions.None)[0], @"[0-9.]+", "#");
+                if (!_memLoggedThisRaid.Add(identity))
+                {
+                    continue;
+                }
+
                 Logger.LogWarning($"[mem suspect] {line}");
                 if (_memSuspectNotify.Value && _memNotifiedThisRaid.Add(kind))
                 {
@@ -1559,6 +1595,8 @@ namespace CactusPie.RamCleanerInterval
             {
                 sb.Append("마지막 레이드 결산: ").Append(_lastReport).Append('\n');
             }
+
+            sb.Append("레이드 후 남은 메모리: ").Append(_keptAfterRaid).Append('\n');
 
             sb.Append("누수 추적: ").Append(LeakOn || _leak.Snapshots > 0 ? _leak.LastSummary : "꺼짐").Append('\n');
             sb.Append("원인 추적 모드: ").Append(_diagMode.Value ? $"켜짐 ({(Time.realtimeSinceStartup - Math.Max(0f, _diagStartedAt)) / 60f:0}분째)" : "꺼짐")
