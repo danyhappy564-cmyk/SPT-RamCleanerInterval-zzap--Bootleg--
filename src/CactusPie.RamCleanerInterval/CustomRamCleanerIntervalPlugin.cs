@@ -14,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.8.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.9.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -67,6 +67,23 @@ namespace CactusPie.RamCleanerInterval
         private readonly OverlayPanel _panel = new OverlayPanel();
         private SessionLog _sessionLog;
         private float _diagStartedAt = -1f;
+        private int _gcRunningFrame = -1;
+
+        // After-raid cleanup in the menu: GC -> asset unload -> working set trim, so Windows gets the memory back now.
+        private enum PostRaidPhase
+        {
+            None,
+            Waiting,
+            Gc,
+            Assets,
+            Trim,
+        }
+
+        private PostRaidPhase _postRaid = PostRaidPhase.None;
+        private float _postRaidAt = -1f;
+        private float _postRaidLogUntil = -1f;
+        private float _postRaidNextLog = -1f;
+        private long _postRaidFreeBefore;
         private readonly WaitForEndOfFrame _endOfFrame = new WaitForEndOfFrame();
         private string _lastMemSuspectKey = string.Empty;
         private readonly HashSet<string> _memNotifiedThisRaid = new HashSet<string>();
@@ -201,6 +218,8 @@ namespace CactusPie.RamCleanerInterval
                 {
                     _gc.Tick(_gcSliceMs.Value, _inGame);
                 }
+
+                _gcRunningFrame = Time.frameCount;
             }
 
             TickAssetUnload(now);
@@ -253,7 +272,57 @@ namespace CactusPie.RamCleanerInterval
                 EvaluateModObjects(now);
             }
 
+            EvaluatePostRaid(now);
             BuildTexts(now);
+        }
+
+        private void EvaluatePostRaid(float now)
+        {
+            if (_inGame)
+            {
+                return;
+            }
+
+            if (_postRaidLogUntil > 0f && now >= _postRaidNextLog && now <= _postRaidLogUntil)
+            {
+                _postRaidNextLog = now + 15f;
+                Logger.LogInfo($"[mem after raid] {DescribeForLog(_snapshot)} | GC {_snapshot.GcMode}");
+            }
+
+            if (_postRaid != PostRaidPhase.Waiting || now < _postRaidAt)
+            {
+                return;
+            }
+
+            // By now the game has finished its own return-to-menu cleanup. In the menu a hitch costs nothing,
+            // so do the full sequence: GC (incl. the blocking fallback), unused assets, then the working set.
+            _postRaidFreeBefore = _snapshot.SystemAvailable;
+            Logger.LogInfo($"After-raid cleanup start: system free {MemoryStats.Gb(_snapshot.SystemAvailable)} GB, " +
+                           $"game working set {MemoryStats.Gb(_snapshot.WorkingSet)} GB");
+            _postRaid = PostRaidPhase.Gc;
+            if (!_gc.Start("after raid", true, false))
+            {
+                PostRaidAssets();
+            }
+        }
+
+        private void PostRaidAssets()
+        {
+            _postRaid = PostRaidPhase.Assets;
+            StartAssetUnload("after raid", false, false);
+            if (_assetPhase == AssetPhase.Idle)
+            {
+                PostRaidTrim(); // an unload was already running: skip this step rather than stall
+            }
+        }
+
+        private void PostRaidTrim()
+        {
+            _postRaid = PostRaidPhase.Trim;
+            if (!StartTrim("after raid"))
+            {
+                _postRaid = PostRaidPhase.None;
+            }
         }
 
         private void OnRaidStateChanged(float now)
@@ -276,6 +345,8 @@ namespace CactusPie.RamCleanerInterval
 
             if (_inGame)
             {
+                _postRaid = PostRaidPhase.None;
+                _postRaidLogUntil = -1f;
                 _warnedNoIncremental = false;
                 Logger.LogInfo($"Raid loading: GC mode {GarbageCollector.GCMode}, incremental={GarbageCollector.isIncremental}, " +
                                $"mono used {MemoryStats.Gb(MemoryStats.MonoUsed())} GB");
@@ -292,6 +363,14 @@ namespace CactusPie.RamCleanerInterval
                 _gc.Abort(false, "레이드가 끝나서 중단");
                 _combat.Unbind();
                 Logger.LogInfo("Left raid");
+                if (_postRaidCleanup.Value)
+                {
+                    _postRaid = PostRaidPhase.Waiting;
+                    _postRaidAt = now + _postRaidDelaySec.Value;
+                }
+
+                _postRaidLogUntil = now + 180f;
+                _postRaidNextLog = now;
                 _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f, _allocSuspectMbPerMin.Value);
                 FinishRaidReport();
                 FinishFpsHistory();
@@ -423,6 +502,11 @@ namespace CactusPie.RamCleanerInterval
 
         private void OnGcFinished()
         {
+            if (_postRaid == PostRaidPhase.Gc)
+            {
+                PostRaidAssets();
+            }
+
             _gcBaseline = _gc.LastUsedAfter;
             if (_inGame)
             {
@@ -578,6 +662,11 @@ namespace CactusPie.RamCleanerInterval
 
         private void FinishAssetUnload(float now)
         {
+            if (_postRaid == PostRaidPhase.Assets)
+            {
+                PostRaidTrim();
+            }
+
             _assetPhase = AssetPhase.Idle;
             _report.AddAssetUnload();
             _lastUnload = now;
@@ -672,11 +761,11 @@ namespace CactusPie.RamCleanerInterval
         /// EmptyWorkingSet on a 40 GB working set took 3.5 s in a real log (2026-09-29) and froze the game
         /// for all of it because v2.0.0 called it from Update. The call does not need the main thread.
         /// </summary>
-        private void StartTrim(string reason)
+        private bool StartTrim(string reason)
         {
             if (Interlocked.CompareExchange(ref _trimRunning, 1, 0) != 0)
             {
-                return;
+                return false;
             }
 
             _lastTrim = Time.realtimeSinceStartup;
@@ -694,6 +783,13 @@ namespace CactusPie.RamCleanerInterval
                 {
                     Interlocked.Exchange(ref _trimRunning, 0);
                     _report.AddTrim();
+                    if (_postRaid == PostRaidPhase.Trim && reason == "after raid")
+                    {
+                        _postRaid = PostRaidPhase.None;
+                        MemorySnapshot now = MemoryStats.Sample();
+                        Logger.LogInfo($"After-raid cleanup done: system free {MemoryStats.Gb(_postRaidFreeBefore)} -> {MemoryStats.Gb(now.SystemAvailable)} GB, " +
+                                       $"game working set {MemoryStats.Gb(now.WorkingSet)} GB, private {MemoryStats.Gb(now.PrivateBytes)} GB");
+                    }
                     _lastTrimResult = ok
                         ? $"{DateTime.Now:HH:mm:ss} 워킹셋 {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB ({reason})"
                         : $"{DateTime.Now:HH:mm:ss} 실패 (윈도우 API 호출 불가)";
@@ -701,6 +797,7 @@ namespace CactusPie.RamCleanerInterval
                                    $"background call {watch.Elapsed.TotalMilliseconds:0}ms");
                 });
             });
+            return true;
         }
 
         // ---------------------------------------------------------------- Hitch detector / raid report / warnings
@@ -731,7 +828,7 @@ namespace CactusPie.RamCleanerInterval
             // Skip the first seconds after the countdown: spawn waves and streaming make those frames noisy.
             bool active = _hitchEnabled.Value && _inGame && _raidStartedAt >= 0f && now - _raidStartedAt > 5f;
             _hitch.Check(active, _hitchThresholdMs.Value, _hitchContext, HitchModTrackingOn ? _profiler : null,
-                Time.realtimeSinceStartup - _lastSpawnTime < 1.5f);
+                Time.realtimeSinceStartup - _lastSpawnTime < 1.5f, _gcRunningFrame >= previousFrame);
         }
 
         // ---------------------------------------------------------------- Mod profiler / mod objects / FPS history
@@ -1212,8 +1309,10 @@ namespace CactusPie.RamCleanerInterval
             }
 
             // Log/notify when the set of suspects changes, not when their numbers move (per-death MB changes every second).
-            string key = string.Join("|", _memSuspects.Select(line => line.Substring(0, Math.Min(6, line.Length)))) +
-                         "|" + _profiler.AllocSuspect + "|" + _objects.Suspect;
+            // Numbers stripped: "SAIN 42MB/min" -> "SAIN #MB/min" is the same suspect as last window.
+            string key = System.Text.RegularExpressions.Regex.Replace(
+                string.Join("|", _memSuspects.Select(line => line.Substring(0, Math.Min(6, line.Length)))) +
+                "|" + _profiler.AllocSuspect + "|" + _objects.Suspect, @"[0-9.]+", "#");
             if (key == _lastMemSuspectKey)
             {
                 return;

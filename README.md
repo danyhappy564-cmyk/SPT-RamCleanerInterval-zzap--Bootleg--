@@ -18,6 +18,14 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 변경 이력
 
+- 2026-10-02 14:15 (KST) — **v2.9.0: 레이드 끝난 뒤 '시스템 여유'가 늦게 돌아오던 문제 + 끊김 원인 판정 수정**
+  - **레이드 끝난 뒤 메뉴에서 정리 (05번, 기본 켬):** 메뉴로 돌아와 20초 뒤 GC → 안 쓰는 에셋 정리 → 워킹셋 정리를 한 번 실행.
+    레이드 동안 커진 게임 메모리(로그상 워킹셋 28GB, 관리 힙 6.5GB — 이 힙은 한 번 커지면 스스로 안 줄어듦)를 윈도우에 바로 돌려줌.
+    메뉴라서 끊겨도 상관없음. 레이드 후 3분 동안 15초마다 `[mem after raid]` 줄로 회복 과정을 기록
+  - **끊김 원인 판정 수정:** 이 모드가 그 프레임에 직접 쓴 시간이 프레임의 30% 이상(최소 8ms)일 때만 "RAM 클리너"로 판정
+    (전에는 300ms 프레임에서 GC가 2ms만 써도 RAM 클리너 탓으로 셌음). GC가 도는 동안 생긴 나머지 끊김은
+    **"GC 진행 중 (간접)"**으로 따로 셈 — 실측상 큰 GC(오래 미뤄서 3.8GB) 동안 300ms대 프레임이 여러 번 있었음
+  - **같은 메모리 의심이 15초마다 반복 기록되던 문제 수정** (숫자만 바뀐 같은 의심은 다시 기록·알림 안 함)
 - 2026-10-02 09:00 (KST) — **v2.8.0: 화면 정리 + 원인 추적 한 번에 켜기/끄기 (Ctrl+F9) + 전용 로그 파일**
   - **화면 표시 정리:** 구간마다 색 제목 줄(메모리 · 프레임 · 모드별 부하 · 모드별 메모리 생성 · 끊김 원인)과 간격을 둬서 구분.
     막대 옆에 프레임 비율(%)도 표시, 긴 의심 문구는 잘리지 않고 줄바꿈
@@ -150,7 +158,7 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 설치
 
-1. `release\RamCleanerInterval-2.8.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
+1. `release\RamCleanerInterval-2.9.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
    `BepInEx\plugins\CactusPie.RamCleanerInterval\CactusPie.RamCleanerInterval.dll`로 들어갑니다.
 2. **예전 버전 DLL이 `BepInEx\plugins\`에 있으면 지우세요.**
 3. **SPTVRAMCleaner를 쓰고 있었다면 빼세요.** 이 모드에 같은 기능(개선판)이 들어 있어서, 둘 다 있으면 레이드 시작 때 두 번 정리합니다.
@@ -201,6 +209,8 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 | 항목 | 기본값 | 설명 |
 |---|---|---|
+| 레이드 끝난 뒤 메뉴에서 정리 | 켬 | 메뉴로 돌아오면 GC → 에셋 → 워킹셋 정리 1회. 시스템 여유가 바로 회복 (다음 로딩이 아주 약간 길어질 수 있음) |
+| 레이드 끝난 뒤 정리까지 대기 (초) | 20 | 게임 자체 정리가 끝나길 기다리는 시간 |
 | **원인 추적 모드 (한 번에 켜기/끄기)** | 끔 | 화면 표시 + 모드별 상시 측정 + 끊김 원인 추적을 한꺼번에. 끌 때 요약을 전용 로그에 저장 |
 | 원인 추적 모드 단축키 | Ctrl+F9 | 게임 중 누르면 켜고 끔 (게임 알림으로 알려 줌) |
 | 원인 추적 모드에 무거운 추적 포함 | 끔 | 켜면 누수 추적·모드별 오브젝트 수도 같이 (몇 분마다 0.2~1초 끊김) |
@@ -232,6 +242,8 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 | 끊김 기준 (ms) | 50 | 60fps 한 프레임 ≈ 16ms. 레이드 시작 후 5초, 게임 창이 비활성일 때는 기록 안 함 |
 | 끊김 원인 모드 추적 (상시 측정) | 끔 | 끊긴 프레임마다 원인(모드 / RAM 클리너 / 봇 스폰 / 게임 자체) 기록. 10번이 켜져 있어야 함 |
 | 끊김 의심 게임 알림 | 켬 | 한 원인이 끊김의 30% 이상(3회 이상)이면 레이드당 한 번 |
+
+**"GC 진행 중 (간접)"**은 자동 GC가 도는 동안 생긴 끊김입니다. 많으면 04번 'GC 최대 대기'를 줄이거나 01번 '정리 시작 기준'을 낮춰 GC 한 번을 작게 만드세요.
 
 **읽는 법:** "게임 자체 / 측정 밖"이 대부분이면 모드 코드가 아니라 렌더링(그래픽 설정·VRAM 포화), 물리, 에셋 로딩 쪽입니다.
 특정 모드가 반복해서 원인으로 잡히면 그 모드 설정을 낮추거나 빼서 비교해 보세요.
@@ -340,7 +352,7 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 ## 직접 빌드
 
 - 루트의 `build.bat` 더블클릭 → Release 빌드, `E:\SPT 4.1\BepInEx\plugins\CactusPie.RamCleanerInterval\`로 자동 복사,
-  `release\RamCleanerInterval-2.8.0-SPT4.1.zip` 생성.
+  `release\RamCleanerInterval-2.9.0-SPT4.1.zip` 생성.
 - SPT 경로가 다르면 `src\RamCleaner.local.props.example`을 `src\RamCleaner.local.props`로 복사해서 경로를 고치세요.
 - 필요한 것: .NET SDK 8 이상. 참조는 SPT 설치 폴더의 `EscapeFromTarkov_Data\Managed`와 `BepInEx\core`에서 가져옵니다
   (`spt-reflection`은 쓰지 않습니다. `0Harmony`는 BepInEx\core의 것을 참조하며, 모드별 부하 분석이 다른 모드 함수에 측정 장치를 붙일 때만 씁니다 — 게임 동작은 바꾸지 않습니다).

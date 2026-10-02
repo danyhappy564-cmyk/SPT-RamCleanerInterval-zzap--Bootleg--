@@ -29,6 +29,7 @@ namespace CactusPie.RamCleanerInterval
 
         public const string CauseRamCleaner = "RAM 클리너 (GC 등)";
         public const string CauseSpawn = "봇 스폰";
+        public const string CauseGcIndirect = "GC 진행 중 (간접)";
         public const string CauseGame = "게임 자체 / 측정 밖";
 
         private sealed class CauseStats
@@ -108,7 +109,7 @@ namespace CactusPie.RamCleanerInterval
         }
 
         /// <summary>Call at the start of Update, after the Note* calls for the previous frame.</summary>
-        public void Check(bool active, float thresholdMs, System.Func<string> context, ModCostProfiler profiler, bool spawnRecent)
+        public void Check(bool active, float thresholdMs, System.Func<string> context, ModCostProfiler profiler, bool spawnRecent, bool gcInProgress)
         {
             float frameMs = Time.unscaledDeltaTime * 1000f;
             if (!active || !Application.isFocused || frameMs < thresholdMs)
@@ -117,7 +118,7 @@ namespace CactusPie.RamCleanerInterval
                 return;
             }
 
-            Judge(frameMs, thresholdMs, context, profiler, spawnRecent);
+            Judge(frameMs, thresholdMs, context, profiler, spawnRecent, gcInProgress);
             Clear();
         }
 
@@ -127,7 +128,7 @@ namespace CactusPie.RamCleanerInterval
             _prevAssetUnload = _prevTrimRunning = false;
         }
 
-        private void Judge(float frameMs, float thresholdMs, System.Func<string> context, ModCostProfiler profiler, bool spawnRecent)
+        private void Judge(float frameMs, float thresholdMs, System.Func<string> context, ModCostProfiler profiler, bool spawnRecent, bool gcInProgress)
         {
             // Which mod spent the most time in that frame (needs the profiler measuring every frame).
             string topMod = null;
@@ -136,10 +137,14 @@ namespace CactusPie.RamCleanerInterval
             bool attributed = profiler != null && profiler.LastFrameTop(out topMod, out topMs, out modsMs);
 
 
-            string ours = DescribeOurs(out bool isOurs);
+            string ours = DescribeOurs(out bool didSomething);
 
-            // Cause: our own work first (we know it exactly), then a mod that took a big share of the frame,
-            // then a bot spawn in the last second, else the game itself (rendering, physics, loading, other threads).
+            // Cause, in order: our own measured work when it is a real share of the frame (a 2 ms GC slice in a
+            // 300 ms frame is not the cause - 2026-10-02 log), an asset unload (heavy but unmeasured), a mod with a
+            // big share, "GC in progress" (frames that are slow while an incremental GC cycle runs, without our
+            // slice being big: allocations/write barriers do GC work too), a bot spawn, else the game itself.
+            double ourMs = _prevGcMs + _prevLeakMs;
+            bool isOurs = ourMs >= System.Math.Max(8.0, frameMs * 0.3) || _prevAssetUnload;
             string cause;
             if (isOurs)
             {
@@ -148,6 +153,10 @@ namespace CactusPie.RamCleanerInterval
             else if (attributed && topMod != null && topMs >= System.Math.Max(8f, frameMs * 0.3f))
             {
                 cause = topMod;
+            }
+            else if (gcInProgress)
+            {
+                cause = CauseGcIndirect;
             }
             else if (spawnRecent)
             {
@@ -182,11 +191,11 @@ namespace CactusPie.RamCleanerInterval
             if (frameMs > MaxMs)
             {
                 MaxMs = frameMs;
-                MaxWhat = isOurs ? ours : "다른 원인";
+                MaxWhat = isOurs ? ours : cause;
             }
 
             float now = Time.realtimeSinceStartup;
-            LastText = $"{System.DateTime.Now:HH:mm:ss} {frameMs:0}ms — 원인: {cause}" + (isOurs ? $" ({ours})" : string.Empty);
+            LastText = $"{System.DateTime.Now:HH:mm:ss} {frameMs:0}ms — 원인: {cause}" + (didSomething ? $" (이 모드 작업: {ours})" : string.Empty);
 
             // Rate limit: a stutter storm (loading, alt-tab) must not flood the log.
             if (now - _lastLogTime < MinLogGapSeconds)
@@ -202,7 +211,7 @@ namespace CactusPie.RamCleanerInterval
                 ? $" | mod code in that frame {modsMs:0}ms, top {topMod} {topMs:0}ms"
                 : attributed ? " | mod code in that frame ~0ms" : string.Empty;
             _log.LogInfo($"[hitch] {frameMs:0}ms frame (threshold {thresholdMs:0}) — cause: {cause}" +
-                         (isOurs ? " (RAM cleaner: " + DescribeOursEnglish() + ")" : string.Empty) +
+                         (didSomething ? " (RAM cleaner work in that frame: " + DescribeOursEnglish() + ")" : string.Empty) +
                          $"{modPart} | {context()}{extra}");
         }
 
@@ -216,7 +225,8 @@ namespace CactusPie.RamCleanerInterval
                 .FirstOrDefault();
             if (top.Key != null && top.Value.Count >= 3 && top.Value.Count >= total * 0.3f)
             {
-                Suspect = $"{top.Key} — 끊김 {total}회 중 {top.Value.Count}회의 원인 (최대 {top.Value.MaxMs:0}ms)";
+                Suspect = $"{top.Key} — 끊김 {total}회 중 {top.Value.Count}회의 원인 (최대 {top.Value.MaxMs:0}ms)" +
+                          (top.Key == CauseGcIndirect ? " · 자동 GC를 오래 미룰수록 한 번이 커져서 길어짐(04. GC 최대 대기를 줄여 보세요)" : string.Empty);
             }
         }
 

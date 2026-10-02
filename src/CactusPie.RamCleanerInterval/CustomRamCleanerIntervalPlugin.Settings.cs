@@ -76,6 +76,8 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<bool> _diagMode;
         private ConfigEntry<KeyboardShortcut> _diagHotkey;
         private ConfigEntry<bool> _diagHeavy;
+        private ConfigEntry<bool> _postRaidCleanup;
+        private ConfigEntry<int> _postRaidDelaySec;
         private ConfigEntry<bool> _reportEnabled;
         private ConfigEntry<bool> _reportNotify;
         private ConfigEntry<bool> _warnEnabled;
@@ -429,6 +431,16 @@ namespace CactusPie.RamCleanerInterval
 
         private void BindGeneralSettings()
         {
+            _postRaidCleanup = Bind(GeneralSection, GeneralCategory, "After raid cleanup", "레이드 끝난 뒤 메뉴에서 정리", true,
+                "레이드가 끝나고 메뉴로 돌아오면 GC → 안 쓰는 에셋 정리 → 워킹셋 정리를 한 번 합니다(메뉴라 끊겨도 상관없음). " +
+                "레이드 동안 커진 게임 메모리가 윈도우에 바로 돌아가서 '시스템 여유'가 금방 회복됩니다. " +
+                "대신 다음 레이드 로딩 때 일부를 다시 읽어 오느라 로딩이 아주 약간 길어질 수 있습니다.",
+                null, 11);
+
+            _postRaidDelaySec = Bind(GeneralSection, GeneralCategory, "After raid delay (s)", "레이드 끝난 뒤 정리까지 대기 (초)", 20,
+                "메뉴로 돌아온 뒤 게임이 자체 정리를 마칠 때까지 기다리는 시간입니다.",
+                new AcceptableValueRange<int>(5, 120), 11);
+
             _diagMode = Bind(GeneralSection, GeneralCategory, "Diagnostic mode", "원인 추적 모드 (한 번에 켜기/끄기)", false,
                 "켜면 화면 표시 + 모드별 상시 측정 + 끊김 원인 추적을 한꺼번에 켭니다(개별 설정과 상관없이). 끄면 개별 설정대로 돌아가고, " +
                 "그동안의 요약(의심 모드, 끊김 원인, 메모리)이 전용 로그(BepInEx\\RamCleaner 폴더)에 저장됩니다. 아래 단축키로도 켜고 끌 수 있습니다.",
