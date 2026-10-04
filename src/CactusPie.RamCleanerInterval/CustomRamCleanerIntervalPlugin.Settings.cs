@@ -21,6 +21,10 @@ namespace CactusPie.RamCleanerInterval
         private const string ModObjectsSection = "11. Mod objects";
         private const string FpsSection = "12. FPS history";
         private const string MemSuspectSection = "13. Memory suspects";
+        private const string ServerSection = "14. SPT server";
+        private const string ForecastSection = "15. Forecast";
+        private const string SessionReportSection = "16. Session report";
+        private const string HeavyItemsSection = "17. Experimental heavy items";
         private const string InternalSection = "Internal";
 
         // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
@@ -39,6 +43,10 @@ namespace CactusPie.RamCleanerInterval
         private const string ModObjectsCategory = "11. 모드별 오브젝트 증가 (참고용)";
         private const string FpsCategory = "12. 프레임 기록·이전 레이드와 비교";
         private const string MemSuspectCategory = "13. 메모리 누수 의심 판정";
+        private const string ServerCategory = "14. SPT 서버 상태 (메모리·응답 시간)";
+        private const string ForecastCategory = "15. 메모리 예측 (남은 시간·재시작 권장)";
+        private const string SessionReportCategory = "16. 세션 보고서 (그래프 페이지)";
+        private const string HeavyItemsCategory = "17. [실험] 무거운 모드 아이템 찾기";
 
         private ConfigEntry<bool> _gcEnabled;
         private ConfigEntry<float> _gcGrowthGb;
@@ -109,6 +117,17 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<bool> _memSuspectNotify;
         private ConfigEntry<int> _keptAfterRaidSuspectMb;
 
+        private ConfigEntry<bool> _serverEnabled;
+        private ConfigEntry<bool> _overlayServer;
+        private ConfigEntry<bool> _forecastEnabled;
+        private ConfigEntry<bool> _overlayForecast;
+        private ConfigEntry<int> _forecastWarnMinutes;
+        private ConfigEntry<bool> _forecastNotify;
+        private ConfigEntry<bool> _restartNotify;
+        private ConfigEntry<bool> _sessionReportEnabled;
+        private ConfigEntry<bool> _heavyEnabled;
+        private ConfigEntry<bool> _overlayHeavy;
+
         private ConfigEntry<bool> _onlyInRaid;
         private ConfigEntry<bool> _showOverlay;
         private ConfigEntry<int> _logIntervalSec;
@@ -126,6 +145,10 @@ namespace CactusPie.RamCleanerInterval
             BindWarningSettings();
             BindProfilerSettings();
             BindMemorySuspectSettings();
+            BindServerSettings();
+            BindForecastSettings();
+            BindSessionReportSettings();
+            BindHeavyItemSettings();
             MigrateSettings();
         }
 
@@ -310,6 +333,70 @@ namespace CactusPie.RamCleanerInterval
             _memSuspectNotify = Bind(MemSuspectSection, MemSuspectCategory, "In-game notification", "게임 알림으로 표시", true,
                 "새 의심이 생기면 종류별로 레이드당 한 번 게임 알림을 띄웁니다.",
                 null, 6);
+        }
+
+        private void BindServerSettings()
+        {
+            _serverEnabled = Bind(ServerSection, ServerCategory, "Enabled", "SPT 서버 상태 보기", true,
+                "SPT 서버 프로그램의 메모리(같은 PC의 RAM을 같이 씀)와 서버 응답 시간을 잽니다. 서버 모드가 없어도 동작합니다.\n" +
+                "• 봇 생성 응답: 레이드 중 봇을 요청하고 서버가 만들어 줄 때까지 걸린 시간 — 길면 스폰이 늦습니다(봇 장비 모드가 무거우면 늘어남).\n" +
+                "• 서버 응답 대기로 멈춤: 어떤 모드가 서버에 '기다리는' 방식으로 물어보면 그동안 게임이 멈춥니다. " +
+                "07. 끊김 감지기가 이런 끊김을 '서버 응답 대기 (주소)'로 표시합니다 — 주소(/sain/…, /orbit/… 등)로 어느 모드인지 알 수 있습니다.\n" +
+                "끄면 바로 꺼집니다. 처음 켜면 메인 메뉴에서 측정 장치를 한 번 설치합니다.",
+                null, 10);
+
+            _overlayServer = Bind(ServerSection, ServerCategory, "Show in overlay", "화면 표시에 서버 칸 넣기", true,
+                "왼쪽 위 화면 표시(05번 '화면에 표시' 또는 원인 추적 모드)에 '서버' 칸을 넣습니다.",
+                null, 9);
+        }
+
+        private void BindForecastSettings()
+        {
+            _forecastEnabled = Bind(ForecastSection, ForecastCategory, "Enabled", "메모리 예측 켜기", true,
+                "• 여유 예상(레이드 중): 최근 10분 동안 메모리가 줄어드는 속도로 'RAM 부족(끊김 시작)' 또는 '커밋 한도(튕김)'까지 남은 시간과, " +
+                "지금 사망 1명당 메모리로 '봇 몇 명 더 죽으면 한도'인지 계산합니다(레이드 3분 뒤부터).\n" +
+                "• 재시작 권장(레이드 후): 메뉴 정리 뒤에도 판마다 남는 메모리와 레이드 중 늘어나는 양으로 '몇 판 더 가능한지'를 계산합니다(2판째부터).",
+                null, 10);
+
+            _overlayForecast = Bind(ForecastSection, ForecastCategory, "Show in overlay", "화면 표시에 예측 넣기", true,
+                "왼쪽 위 화면 표시의 '메모리' 칸에 여유 예상(레이드 중)과 재시작 권장(메뉴)을 한 줄로 넣습니다.",
+                null, 9);
+
+            _forecastWarnMinutes = Bind(ForecastSection, ForecastCategory, "Warn below (min)", "여유 경고 기준 (분)", 15,
+                "여유 예상이 이 시간보다 짧아지면 화면 표시가 빨갛게 바뀌고(아래 알림이 켜져 있으면) 레이드당 한 번 알립니다.",
+                new AcceptableValueRange<int>(3, 60), 8);
+
+            _forecastNotify = Bind(ForecastSection, ForecastCategory, "Runway notification", "여유 부족 게임 알림", true,
+                "여유 예상이 기준보다 짧아지면 게임 알림으로 띄웁니다(레이드당 한 번).",
+                null, 7);
+
+            _restartNotify = Bind(ForecastSection, ForecastCategory, "Restart notification", "재시작 권장 게임 알림", true,
+                "다음 판까지만 하고 재시작하는 게 좋겠다고 판단되면 레이드 후 메뉴에서 게임 알림으로 띄웁니다.",
+                null, 6);
+        }
+
+        private void BindSessionReportSettings()
+        {
+            _sessionReportEnabled = Bind(SessionReportSection, SessionReportCategory, "Enabled", "세션 보고서 만들기", true,
+                "레이드가 끝날 때마다 BepInEx\\RamCleaner\\RamCleaner-report-날짜.html 을 새로 씁니다(게임을 켤 때마다 파일 하나, 최근 15개 보관). " +
+                "판별 요약 표, 판마다 메모리·FPS 그래프, 끊김 원인, 남은 메모리와 재시작 판단이 들어갑니다. " +
+                "05번의 '세션 보고서 열기' 버튼이나 탐색기에서 더블클릭으로 엽니다(인터넷 불필요).",
+                null, 10);
+        }
+
+        private void BindHeavyItemSettings()
+        {
+            _heavyEnabled = Bind(HeavyItemsSection, HeavyItemsCategory, "Enabled", "[실험] 무거운 모드 아이템 찾기 켜기", false,
+                "레이드 중 봇이 스폰될 때 게임이 장비 번들(모델·텍스처)을 처음 불러오면서 늘어난 메모리를 재서, " +
+                "어느 모드의 어느 아이템이 메모리를 많이 먹는지 순위를 만듭니다(SPT 번들 목록으로 모드 구분). " +
+                "'사망 1명당 메모리'가 클 때 APBS 등에서 뺄 아이템을 고르는 참고용입니다.\n" +
+                "실험 기능인 이유: 불러오기가 비동기라 다른 일과 섞여서 숫자 하나하나는 부정확합니다. 여러 판에서 반복해서 큰 것만 믿으세요. " +
+                "켜면 메인 메뉴에서 측정 장치를 설치합니다(측정 자체 부담은 거의 없음).",
+                null, 10);
+
+            _overlayHeavy = Bind(HeavyItemsSection, HeavyItemsCategory, "Show in overlay", "화면 표시에 순위 넣기", true,
+                "켜져 있으면 왼쪽 위 화면 표시에 모드별 막대를 넣습니다.",
+                null, 9);
         }
 
         private void BindLeakSettings()

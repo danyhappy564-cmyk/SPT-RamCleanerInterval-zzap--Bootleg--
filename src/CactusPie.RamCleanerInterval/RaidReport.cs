@@ -16,6 +16,7 @@ namespace CactusPie.RamCleanerInterval
         private long _peakWorkingSet;
         private long _peakVram;
         private long _minCommitAvailable = long.MaxValue;
+        private long _minSystemAvailable = long.MaxValue;
         private long _nativeAtStart = -1;
         private long _nativeAtEnd = -1;
         private int _deadAtStart;
@@ -37,12 +38,27 @@ namespace CactusPie.RamCleanerInterval
 
         public string LastSummaryKorean { get; private set; } = "아직 없음";
 
+        /// <summary>Length of the last finished raid, minutes.</summary>
+        public double LastMinutes { get; private set; }
+
+        /// <summary>Highest game commit (private bytes) seen this raid.</summary>
+        public long PeakPrivate => _peakPrivate;
+
+        /// <summary>Lowest system free RAM this raid, bytes (-1 unknown).</summary>
+        public long MinSystemAvailable => _minSystemAvailable == long.MaxValue ? -1 : _minSystemAvailable;
+
+        public int Deaths => Math.Max(0, _deadAtEnd - _deadAtStart);
+
+        /// <summary>Native memory per death over the raid, MB (-1 under 3 deaths).</summary>
+        public double PerDeathMb => Deaths >= 3 && _nativeAtStart >= 0 ? (_nativeAtEnd - _nativeAtStart) / (1024d * 1024d) / Deaths : -1;
+
         public void Begin(MemorySnapshot s, int dead)
         {
             Active = true;
             _start = DateTime.Now;
             _peakPrivate = _peakNative = _peakWorkingSet = _peakVram = 0;
             _minCommitAvailable = long.MaxValue;
+            _minSystemAvailable = long.MaxValue;
             _nativeAtStart = s.Native;
             _nativeAtEnd = s.Native;
             _deadAtStart = Math.Max(0, dead);
@@ -66,6 +82,11 @@ namespace CactusPie.RamCleanerInterval
             if (s.CommitLimit > 0)
             {
                 _minCommitAvailable = Math.Min(_minCommitAvailable, s.CommitAvailable);
+            }
+
+            if (s.SystemTotal > 0)
+            {
+                _minSystemAvailable = Math.Min(_minSystemAvailable, s.SystemAvailable);
             }
 
             if (s.Native >= 0)
@@ -120,6 +141,7 @@ namespace CactusPie.RamCleanerInterval
         {
             Active = false;
             double minutes = (DateTime.Now - _start).TotalMinutes;
+            LastMinutes = minutes;
             int deaths = Math.Max(0, _deadAtEnd - _deadAtStart);
             string perDeath = deaths >= 3 && _nativeAtStart >= 0
                 ? $"{(_nativeAtEnd - _nativeAtStart) / (1024d * 1024d) / deaths:0} MB"

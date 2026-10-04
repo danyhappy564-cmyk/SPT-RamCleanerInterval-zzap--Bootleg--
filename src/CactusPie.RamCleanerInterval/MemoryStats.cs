@@ -179,6 +179,25 @@ namespace CactusPie.RamCleanerInterval
             }
         }
 
+        /// <summary>Committed (private) bytes of this process, -1 if unknown. Win32 only, safe to call from any thread.</summary>
+        public static long ReadPrivateBytes()
+        {
+            try
+            {
+                var counters = new ProcessMemoryCountersEx
+                {
+                    cb = (uint)Marshal.SizeOf(typeof(ProcessMemoryCountersEx)),
+                };
+                return GetProcessMemoryInfo(GetCurrentProcess(), ref counters, counters.cb)
+                    ? (long)counters.PrivateUsage.ToUInt64()
+                    : -1;
+            }
+            catch (Exception)
+            {
+                return -1;
+            }
+        }
+
         /// <summary>
         /// Pushes every page of the game out of RAM. Frees nothing - the pages go to the standby list /
         /// page file and are faulted back in when touched, which is exactly the stutter people notice

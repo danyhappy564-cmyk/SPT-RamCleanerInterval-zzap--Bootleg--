@@ -26,11 +26,14 @@ namespace CactusPie.RamCleanerInterval
         private double _prevLeakMs;
         private bool _prevAssetUnload;
         private bool _prevTrimRunning;
+        private double _prevServerMs;
+        private string _prevServerPath;
 
         public const string CauseRamCleaner = "RAM 클리너 (GC 등)";
         public const string CauseSpawn = "봇 스폰";
         public const string CauseGcIndirect = "GC 진행 중 (간접)";
         public const string CauseGame = "게임 자체 / 측정 밖";
+        public const string CauseServerPrefix = "서버 응답 대기";
 
         private sealed class CauseStats
         {
@@ -108,6 +111,13 @@ namespace CactusPie.RamCleanerInterval
             _prevTrimRunning = true;
         }
 
+        /// <summary>The main thread sat in a synchronous SPT server request for <paramref name="ms"/> in the previous frame.</summary>
+        public void NoteServerWait(double ms, string path)
+        {
+            _prevServerMs += ms;
+            _prevServerPath = _prevServerPath ?? path;
+        }
+
         /// <summary>Call at the start of Update, after the Note* calls for the previous frame.</summary>
         public void Check(bool active, float thresholdMs, System.Func<string> context, ModCostProfiler profiler, bool spawnRecent, bool gcInProgress)
         {
@@ -124,7 +134,8 @@ namespace CactusPie.RamCleanerInterval
 
         private void Clear()
         {
-            _prevGcMs = _prevLeakMs = 0;
+            _prevGcMs = _prevLeakMs = _prevServerMs = 0;
+            _prevServerPath = null;
             _prevAssetUnload = _prevTrimRunning = false;
         }
 
@@ -140,15 +151,21 @@ namespace CactusPie.RamCleanerInterval
             string ours = DescribeOurs(out bool didSomething);
 
             // Cause, in order: our own measured work when it is a real share of the frame (a 2 ms GC slice in a
-            // 300 ms frame is not the cause - 2026-10-02 log), an asset unload (heavy but unmeasured), a mod with a
-            // big share, "GC in progress" (frames that are slow while an incremental GC cycle runs, without our
+            // 300 ms frame is not the cause - 2026-10-02 log), an asset unload (heavy but unmeasured), the main thread
+            // blocked on a synchronous SPT server request (measured; named by URL, which says which mod asked), a mod
+            // with a big share, "GC in progress" (frames that are slow while an incremental GC cycle runs, without our
             // slice being big: allocations/write barriers do GC work too), a bot spawn, else the game itself.
             double ourMs = _prevGcMs + _prevLeakMs;
             bool isOurs = ourMs >= System.Math.Max(8.0, frameMs * 0.3) || _prevAssetUnload;
             string cause;
+            bool isServer = _prevServerMs >= System.Math.Max(8.0, frameMs * 0.3);
             if (isOurs)
             {
                 cause = CauseRamCleaner;
+            }
+            else if (isServer)
+            {
+                cause = $"{CauseServerPrefix} {ShortPath(_prevServerPath)}";
             }
             else if (attributed && topMod != null && topMs >= System.Math.Max(8f, frameMs * 0.3f))
             {
@@ -212,7 +229,25 @@ namespace CactusPie.RamCleanerInterval
                 : attributed ? " | mod code in that frame ~0ms" : string.Empty;
             _log.LogInfo($"[hitch] {frameMs:0}ms frame (threshold {thresholdMs:0}) — cause: {cause}" +
                          (didSomething ? " (RAM cleaner work in that frame: " + DescribeOursEnglish() + ")" : string.Empty) +
+                         (_prevServerMs > 1.0 ? $" | waited on the SPT server {_prevServerMs:0}ms ({_prevServerPath ?? "?"})" : string.Empty) +
                          $"{modPart} | {context()}{extra}");
+        }
+
+        /// <summary>"/sain/presets/custom/get" stays as is; query strings and long ids are cut so causes group by endpoint.</summary>
+        private static string ShortPath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return "?";
+            }
+
+            int query = path.IndexOf('?');
+            if (query >= 0)
+            {
+                path = path.Substring(0, query);
+            }
+
+            return path.Length > 40 ? path.Substring(0, 40) + "…" : path;
         }
 
         private void UpdateSuspect()

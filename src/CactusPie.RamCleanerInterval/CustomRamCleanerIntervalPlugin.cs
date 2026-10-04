@@ -14,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.10.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.11.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -54,6 +54,16 @@ namespace CactusPie.RamCleanerInterval
         private ModObjectCounter _objects;
         private FrameStats _frames;
         private PerformanceHistory _history;
+        private ServerMonitor _server;
+        private MemoryForecast _forecast;
+        private HeavyItemTracker _heavy;
+        private SessionReport _sessionReport;
+        private long _privateBeforeRaid = -1;
+        private float _restartEvalAt = -1f;
+        private bool _runwayWarnedThisRaid;
+        private float _nextReportSample = -1f;
+        private int _reportFramesAt;
+        private double _reportSecondsAt;
         private float _profilerNext = -1f;
         private float _objectsNext = -1f;
         private float _objectsPendingSince = -1f;
@@ -159,6 +169,10 @@ namespace CactusPie.RamCleanerInterval
             _objects = new ModObjectCounter(Logger);
             _frames = new FrameStats();
             _history = new PerformanceHistory(Logger);
+            _server = new ServerMonitor(Logger);
+            _forecast = new MemoryForecast();
+            _heavy = new HeavyItemTracker(Logger);
+            _sessionReport = new SessionReport(Logger, System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "RamCleaner"));
             _hitchContext = () => $"players alive {_alive}, dead {_dead}, GC {GarbageCollector.GCMode}" +
                                   (Time.realtimeSinceStartup - _lastSpawnTime < 1.5f ? ", a bot spawned within the last second" : string.Empty) +
                                   (_profiler.Measuring ? ", mod profiler measuring" : string.Empty);
@@ -247,6 +261,7 @@ namespace CactusPie.RamCleanerInterval
             _combat.Poll();
             _snapshot = MemoryStats.Sample();
             SampleWorld();
+            EvaluateServerAndForecast(now);
             if (_inGame)
             {
                 _report.Sample(_snapshot, _vram.Dedicated, _dead);
@@ -384,6 +399,12 @@ namespace CactusPie.RamCleanerInterval
                 _warnedNoIncremental = false;
                 _monoBeforeRaid = MemoryStats.MonoUsed();
                 _nativeBeforeRaid = _snapshot.Native;
+                _privateBeforeRaid = _snapshot.PrivateBytes;
+                _server.ResetRaid();
+                _forecast.ResetRaid();
+                _heavy.ResetRaid();
+                _runwayWarnedThisRaid = false;
+                _restartEvalAt = -1f;
                 Logger.LogInfo($"Raid loading: GC mode {GarbageCollector.GCMode}, incremental={GarbageCollector.isIncremental}, " +
                                $"mono used {MemoryStats.Gb(MemoryStats.MonoUsed())} GB");
             }
@@ -410,6 +431,8 @@ namespace CactusPie.RamCleanerInterval
                 _profiler.StopWindow(_profilerSuspectMs.Value, _profilerSuspectShare.Value / 100f, _allocSuspectMbPerMin.Value);
                 FinishRaidReport();
                 FinishFpsHistory();
+                FinishSessionReportRaid();
+                _restartEvalAt = now + (_postRaidCleanup.Value ? _postRaidDelaySec.Value : 0) + 15f;
             }
         }
 
@@ -458,6 +481,10 @@ namespace CactusPie.RamCleanerInterval
                 _map = null;
             }
             _report.Begin(_snapshot, _dead);
+            _sessionReport.BeginRaid(_map, _server.PrivateBytes > 0 ? _server.PrivateBytes / MemoryStats.BytesPerGb : -1);
+            _nextReportSample = now;
+            _reportFramesAt = 0;
+            _reportSecondsAt = 0;
             _leakNext = now + LeakFirstSnapshotDelay;
             Logger.LogInfo($"Raid started{(started ? string.Empty : " (status timeout)")}: {DescribeForLog(_snapshot)}");
             if (_unloadAuto.Value && s_autoUnloadUselessThisSession)
@@ -839,6 +866,160 @@ namespace CactusPie.RamCleanerInterval
 
         // ---------------------------------------------------------------- Hitch detector / raid report / warnings
 
+        // ---------------------------------------------------------------- Server · forecast · session report · heavy items
+
+        private void EvaluateServerAndForecast(float now)
+        {
+            // Install the request/bundle watchers once, out of raid (main menu), a few seconds after start.
+            if (!_inGame && now > 10f)
+            {
+                if (_serverEnabled.Value)
+                {
+                    _server.Install();
+                }
+
+                if (_heavyEnabled.Value)
+                {
+                    _heavy.Install();
+                }
+            }
+
+            if (_serverEnabled.Value)
+            {
+                _server.Sample(now);
+            }
+
+            _heavy.Active = _heavyEnabled.Value && _inGame && _raidStartedAt >= 0f && now - _raidStartedAt > 5f;
+            _heavy.Drain();
+
+            if (_inGame && _raidStartedAt >= 0f)
+            {
+                if (_forecastEnabled.Value)
+                {
+                    _forecast.Sample(now, _snapshot, CommitFloor(_snapshot), PhysFloor(_snapshot));
+                    if (!_runwayWarnedThisRaid && !double.IsNaN(_forecast.MinutesLeft) && _forecast.MinutesLeft < _forecastWarnMinutes.Value)
+                    {
+                        _runwayWarnedThisRaid = true;
+                        string line = _forecast.DescribeRunway(RecentPerDeathMb(), _snapshot.CommitAvailable, CommitFloor(_snapshot));
+                        Logger.LogWarning($"[runway] {line}");
+                        if (_forecastNotify.Value)
+                        {
+                            _report.AddWarning();
+                            Notify($"메모리 여유 부족 예상 — {line}. 이번 레이드를 마무리하는 걸 권장합니다.", true);
+                        }
+                    }
+                }
+
+                if (_sessionReportEnabled.Value && now >= _nextReportSample)
+                {
+                    _nextReportSample = now + 10f;
+                    double seconds = _frames.TotalSeconds - _reportSecondsAt;
+                    double fps = seconds > 0.5 ? (_frames.Frames - _reportFramesAt) / seconds : _frames.CurrentFps;
+                    _reportFramesAt = _frames.Frames;
+                    _reportSecondsAt = _frames.TotalSeconds;
+                    _sessionReport.Sample((now - _raidStartedAt) / 60.0, _snapshot.PrivateBytes / MemoryStats.BytesPerGb,
+                        _snapshot.SystemAvailable / MemoryStats.BytesPerGb, _server.PrivateBytes > 0 ? _server.PrivateBytes / MemoryStats.BytesPerGb : -1, fps);
+                }
+            }
+
+            EvaluateRestart(now);
+        }
+
+        /// <summary>Same limit as the commit warning (09): the configured percentage of the limit, at least 2 GB.</summary>
+        private long CommitFloor(MemorySnapshot s) =>
+            Math.Max(2L * 1024 * 1024 * 1024, s.CommitLimit * _warnCommitPercent.Value / 100);
+
+        /// <summary>Physical RAM below which Windows starts paging hard: 5% of RAM, at least 2 GB.</summary>
+        private static long PhysFloor(MemorySnapshot s) => Math.Max(2L * 1024 * 1024 * 1024, s.SystemTotal / 20);
+
+        /// <summary>Once per raid, after the post-raid cleanup has finished (or ~15 s after leaving if it is off).</summary>
+        private void EvaluateRestart(float now)
+        {
+            if (_restartEvalAt < 0f || now < _restartEvalAt || _postRaid != PostRaidPhase.None)
+            {
+                return;
+            }
+
+            _restartEvalAt = -1f;
+            string restart = null;
+            if (_forecastEnabled.Value && _privateBeforeRaid > 0 && _report.PeakPrivate > 0)
+            {
+                string notify = _forecast.EvaluateRestart(_snapshot.PrivateBytes, _report.PeakPrivate - _privateBeforeRaid,
+                    _snapshot.CommitAvailable, CommitFloor(_snapshot));
+                restart = _forecast.RestartText;
+                Logger.LogInfo($"[restart] {restart}");
+                if (notify != null && _restartNotify.Value)
+                {
+                    Notify("RAM 클리너: " + notify, true);
+                }
+            }
+
+            if (_sessionReportEnabled.Value)
+            {
+                _sessionReport.AfterRaid(_keptAfterRaid, restart);
+            }
+        }
+
+        private void FinishSessionReportRaid()
+        {
+            if (_heavyEnabled.Value && _heavy.Loads > 0)
+            {
+                Logger.LogInfo($"[heavy items] {_heavy.DescribeForLog(8)}");
+            }
+
+            if (!_sessionReportEnabled.Value)
+            {
+                return;
+            }
+
+            if (_heavyEnabled.Value)
+            {
+                _sessionReport.SetHeavy(_heavy.TopMods(10), _heavy.TopBundles(15));
+            }
+
+            var suspects = new List<string>();
+            if (_profiler.Suspect != null)
+            {
+                suspects.Add("프레임 의심: " + _profiler.Suspect);
+            }
+
+            if (_hitch.Suspect != null)
+            {
+                suspects.Add("끊김 의심: " + _hitch.Suspect);
+            }
+
+            suspects.AddRange(_memSuspects);
+            _sessionReport.EndRaid(r =>
+            {
+                r.Minutes = (float)_report.LastMinutes;
+                r.AvgFps = _frames.AverageFps;
+                r.LowFps = _frames.OnePercentLowFps();
+                r.Deaths = _report.Deaths;
+                r.PerDeathMb = _report.PerDeathMb;
+                r.PeakGameGb = _report.PeakPrivate / MemoryStats.BytesPerGb;
+                r.MinSystemFreeGb = _report.MinSystemAvailable >= 0 ? _report.MinSystemAvailable / MemoryStats.BytesPerGb : -1;
+                r.Hitches = _hitch.Count;
+                r.WorstHitchMs = _hitch.MaxMs;
+                r.Causes = _hitch.Causes();
+                r.ServerEndGb = _server.PrivateBytes > 0 ? _server.PrivateBytes / MemoryStats.BytesPerGb : -1;
+                r.Bots = _server.DescribeBots();
+                r.Waits = _server.DescribeWaits();
+                r.LowestRunwayMin = _forecast.LowestMinutes;
+                r.Suspects = suspects;
+            });
+        }
+
+        private void OpenSessionReport()
+        {
+            if (!_sessionReport.Written || !System.IO.File.Exists(_sessionReport.FilePath))
+            {
+                Notify("세션 보고서는 레이드가 한 판 끝나면 만들어집니다.", false);
+                return;
+            }
+
+            Application.OpenURL("file:///" + _sessionReport.FilePath.Replace('\\', '/'));
+        }
+
         private void CheckHitch(float now)
         {
             int previousFrame = Time.frameCount - 1;
@@ -860,6 +1041,12 @@ namespace CactusPie.RamCleanerInterval
             if (_trimRunning != 0)
             {
                 _hitch.NoteTrimRunning();
+            }
+
+            double serverWait = _server.WaitInFrame(previousFrame, out string serverPath);
+            if (serverWait > 0)
+            {
+                _hitch.NoteServerWait(serverWait, serverPath);
             }
 
             // Skip the first seconds after the countdown: spawn waves and streaming make those frames noisy.
@@ -1226,7 +1413,11 @@ namespace CactusPie.RamCleanerInterval
 
             _nextLog = now + interval;
             Logger.LogInfo($"[mem] {DescribeForLog(_snapshot)} | {DescribeWorld()} | {DescribePerDeath(false)} | GC {_snapshot.GcMode}{(_gc.Running ? " (collecting)" : string.Empty)} | " +
-                           $"combat {(_combat.InventoryOpen ? "inventory" : Mathf.Min(_combat.SecondsSinceCombat, 9999f).ToString("0") + "s ago")}");
+                           $"combat {(_combat.InventoryOpen ? "inventory" : Mathf.Min(_combat.SecondsSinceCombat, 9999f).ToString("0") + "s ago")}" +
+                           (_serverEnabled.Value ? " | " + _server.DescribeForLog() : string.Empty) +
+                           (_forecastEnabled.Value && !double.IsNaN(_forecast.MinutesLeft)
+                               ? $" | runway {_forecast.MinutesLeft:0} min to {(_forecast.Limit == "RAM" ? "RAM floor" : "commit floor")} at -{_forecast.DropMbPerMin:0} MB/min"
+                               : string.Empty));
         }
 
         private string DescribeForLog(MemorySnapshot s)
@@ -1455,6 +1646,49 @@ namespace CactusPie.RamCleanerInterval
                 sb.Append(DescribePerDeath(true)).Append('\n');
             }
 
+            if (_serverEnabled.Value)
+            {
+                sb.Append("SPT 서버: ").Append(_server.Found
+                    ? $"메모리 {MemoryStats.Gb(_server.PrivateBytes)} GB (커밋) / {MemoryStats.Gb(_server.WorkingSet)} GB (실제 RAM) — {_server.ProcessName}"
+                    : "프로세스를 찾는 중 (30초마다)").Append(" · 측정 장치: ").Append(_server.PatchStatus).Append('\n');
+                string bots = _server.DescribeBots();
+                if (bots != null)
+                {
+                    sb.Append("  ").Append(bots).Append('\n');
+                }
+
+                string waits = _server.DescribeWaits();
+                if (waits != null)
+                {
+                    sb.Append("  ").Append(waits).Append('\n');
+                }
+            }
+
+            if (_forecastEnabled.Value)
+            {
+                if (_inGame)
+                {
+                    sb.Append(_forecast.DescribeRunway(RecentPerDeathMb(), s.CommitAvailable, CommitFloor(s)) ?? "여유 예상: 계산 중 (레이드 3분 뒤부터)").Append('\n');
+                }
+
+                sb.Append("재시작 판단: ").Append(_forecast.RestartText).Append('\n');
+            }
+
+            if (_heavyEnabled.Value)
+            {
+                sb.Append("[실험] 무거운 아이템: ").Append(_heavy.Status).Append(", 측정 ").Append(_heavy.Loads).Append("회\n");
+                List<HeavyItemTracker.Stat> heavy = _heavy.TopMods(5);
+                if (heavy.Count > 0)
+                {
+                    sb.Append("  ").Append(string.Join(", ", heavy.Select(x => $"{x.Mod} {x.Mb:0}MB({x.Count}개)"))).Append('\n');
+                }
+            }
+
+            if (_sessionReportEnabled.Value)
+            {
+                sb.Append("세션 보고서: ").Append(_sessionReport.Written ? _sessionReport.FilePath : "레이드 한 판이 끝나면 만들어짐").Append('\n');
+            }
+
             sb.Append("GC 상태: ").Append(gcState)
               .Append(" · 나눠서 하는 GC(증분): ").Append(GarbageCollector.isIncremental ? "지원" : "미지원").Append('\n');
 
@@ -1674,6 +1908,23 @@ namespace CactusPie.RamCleanerInterval
                 _panel.Text(extra, OverlayPanel.Dim);
             }
 
+            if (_forecastEnabled.Value && _overlayForecast.Value)
+            {
+                if (_inGame)
+                {
+                    string runway = _forecast.DescribeRunway(RecentPerDeathMb(), s.CommitAvailable, CommitFloor(s));
+                    if (runway != null)
+                    {
+                        bool low = !double.IsNaN(_forecast.MinutesLeft) && _forecast.MinutesLeft < _forecastWarnMinutes.Value;
+                        _panel.Text(runway, low ? OverlayPanel.Red : OverlayPanel.Dim);
+                    }
+                }
+                else
+                {
+                    _panel.Text("재시작 판단: " + _forecast.RestartText, _forecast.RaidsLeft >= 0 && _forecast.RaidsLeft <= 1 ? OverlayPanel.Red : OverlayPanel.Dim);
+                }
+            }
+
             for (int i = 0; i < _memSuspects.Count; i++)
             {
                 _panel.Text(_memSuspects[i], OverlayPanel.Red);
@@ -1685,6 +1936,48 @@ namespace CactusPie.RamCleanerInterval
                 _panel.Header("프레임", OverlayPanel.Green, _hitchEnabled.Value && _inGame ? $"끊김 {_hitch.Count}회" : null);
                 _panel.Text($"FPS {_frames.CurrentFps:0}" +
                             (_frames.Frames > 0 ? $"  ·  평균 {_frames.AverageFps:0}  ·  1% 저점 {_frames.OnePercentLowFps():0}" : string.Empty));
+            }
+
+            // --- SPT server
+            if (_serverEnabled.Value && _overlayServer.Value)
+            {
+                _panel.Header("SPT 서버", OverlayPanel.Gray, _server.Found ? $"메모리 {MemoryStats.Gb(_server.PrivateBytes)} GB" : "프로세스 찾는 중");
+                string bots = _server.DescribeBots();
+                if (bots != null)
+                {
+                    _panel.Text(bots, _server.BotMaxMs >= 3000 ? OverlayPanel.Yellow : OverlayPanel.Dim);
+                }
+
+                string waits = _server.DescribeWaits();
+                if (waits != null)
+                {
+                    _panel.Text(waits, _server.WaitMaxMs >= 100 ? OverlayPanel.Yellow : OverlayPanel.Dim);
+                }
+
+                if (bots == null && waits == null)
+                {
+                    _panel.Text(_inGame ? "이번 레이드 서버 요청 기록 없음" : "레이드 중 봇 생성 응답·서버 대기를 기록", OverlayPanel.Dim);
+                }
+            }
+
+            // --- experimental heavy items
+            if (_heavyEnabled.Value && _overlayHeavy.Value)
+            {
+                List<HeavyItemTracker.Stat> heavy = _heavy.TopMods(_overlayModCount.Value);
+                _panel.Header("[실험] 처음 로드 메모리 (모드별)", OverlayPanel.Purple, $"측정 {_heavy.Loads}회");
+                if (heavy.Count == 0)
+                {
+                    _panel.Text(_heavy.Status, OverlayPanel.Dim);
+                }
+                else
+                {
+                    double most = Math.Max(1.0, heavy.Max(x => x.Mb));
+                    foreach (HeavyItemTracker.Stat item in heavy)
+                    {
+                        _panel.Bar(item.Mod, (float)(item.Mb / most), $"{item.Mb:0}MB · {item.Count}개" + (item.Overlapped > 0 ? $" (겹침 {item.Overlapped})" : string.Empty),
+                            OverlayPanel.Purple);
+                    }
+                }
             }
 
             if (!_profilerEnabled.Value)
@@ -1799,6 +2092,11 @@ namespace CactusPie.RamCleanerInterval
             if (GUILayout.Button(_diagMode.Value ? "원인 추적 끄기" : "원인 추적 켜기", GUILayout.ExpandWidth(true)))
             {
                 _diagMode.Value = !_diagMode.Value;
+            }
+
+            if (GUILayout.Button("세션 보고서 열기 (브라우저)", GUILayout.ExpandWidth(true)))
+            {
+                OpenSessionReport();
             }
         }
 
