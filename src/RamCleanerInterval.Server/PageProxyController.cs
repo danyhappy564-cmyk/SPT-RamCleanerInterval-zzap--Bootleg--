@@ -86,10 +86,29 @@ public sealed class PageProxyController : ControllerBase
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
+            // Refused = nothing listens (game closed, or its page failed to start); timeout = the game is busy (loading).
+            var why = ex is TaskCanceledException
+                ? T(settings, "시간 초과 — 게임이 켜져 있지만 응답이 늦습니다(레이드 로딩 중일 수 있음).", "timed out — the game is running but slow to answer (maybe loading a raid).")
+                : T(settings, "연결 거부 — 게임이 꺼져 있거나, 게임 안 웹 페이지가 시작되지 못했습니다.", "connection refused — the game is closed, or its web page failed to start.");
             return Offline(api, settings, T(settings,
-                $"게임 안의 RAM 클리너 페이지(127.0.0.1:{settings.Port})에 연결할 수 없습니다. 게임이 켜져 있지 않거나, 레이드 로딩 중이거나, 서버와 게임이 다른 PC에 있을 수 있습니다. 게임이 켜지면 저절로 다시 연결합니다.",
-                $"Cannot reach the RAM cleaner page inside the game (127.0.0.1:{settings.Port}). The game may be closed or loading a raid, or the server and the game run on different PCs. It reconnects by itself once the game is up."));
+                $"게임 안의 RAM 클리너 페이지(127.0.0.1:{settings.Port})에 연결할 수 없습니다. {why}",
+                $"Cannot reach the RAM cleaner page inside the game (127.0.0.1:{settings.Port}): {why}"));
         }
+    }
+
+    /// <summary>Past session reports (BepInEx\RamCleaner\RamCleaner-report-*.html) — readable without the game.</summary>
+    [HttpGet("reports/{name}")]
+    public IActionResult Report(string name)
+    {
+        var dir = PluginSettings.Read().ReportsDir;
+        if (dir is null || Path.GetFileName(name) != name || !name.StartsWith("RamCleaner-report-", StringComparison.Ordinal) ||
+            !name.EndsWith(".html", StringComparison.Ordinal) || !System.IO.File.Exists(Path.Combine(dir, name)))
+        {
+            return NotFound();
+        }
+
+        Response.Headers.CacheControl = "no-store";
+        return PhysicalFile(Path.Combine(dir, name), "text/html; charset=utf-8");
     }
 
     /// <summary>JSON for the page's scripts (they show "error"), or a small page that retries every 5 s.</summary>
@@ -106,11 +125,23 @@ public sealed class PageProxyController : ControllerBase
         }
 
         var title = T(settings, "RAM 클리너", "RAM Cleaner");
+        var checks = string.Join("", new[]
+        {
+            settings.ConfigPath is null
+                ? T(settings, "게임 쪽 설정 파일을 못 찾음(BepInEx\\config) — 기본 포트 6977로 시도", "game-side config file not found (BepInEx\\config) — trying the default port 6977")
+                : T(settings, $"설정 파일: {settings.ConfigPath} · 포트 {settings.Port}", $"config file: {settings.ConfigPath} · port {settings.Port}"),
+            T(settings, "게임이 켜져 있는데도 이 화면이면: 게임 F12 → RAM 클리너 → '현재 상태'의 '웹 페이지:' 줄을 확인하세요.",
+                        "If the game is running and you still see this: check the 'web page:' line in the game's F12 → RAM Cleaner → 'Status'."),
+        }.Select(line => "<li>" + WebUtility.HtmlEncode(line) + "</li>"));
+        var reports = ReportList(settings);
         var html = $$"""
             <!doctype html><html lang="{{T(settings, "ko", "en")}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-            <meta http-equiv="refresh" content="5"><title>{{title}}</title>
+            <title>{{title}}</title>
             {{OfflineCss}}</head><body><main><h1>{{title}}</h1><div class="card"><p>{{WebUtility.HtmlEncode(message)}}</p>
-            <p class="sub">{{T(settings, "이 페이지는 5초마다 다시 시도합니다.", "This page retries every 5 seconds.")}}</p></div></main></body></html>
+            <ul class="sub">{{checks}}</ul>
+            <p class="sub" id="retry">{{T(settings, "게임 쪽 페이지가 열리면 자동으로 넘어갑니다(5초마다 확인).", "Switches over by itself once the game's page answers (checked every 5 s).")}}</p></div>
+            <h2>{{T(settings, "지난 세션 보고서 (게임 없이 열람)", "Past session reports (no game needed)")}}</h2>{{reports}}</main>
+            <script>setInterval(function(){fetch('api/live',{cache:'no-store'}).then(function(r){if(r.ok)location.reload()},function(){})},5000)</script></body></html>
             """;
         return new ContentResult { StatusCode = 503, ContentType = "text/html; charset=utf-8", Content = html };
     }
@@ -122,10 +153,26 @@ public sealed class PageProxyController : ControllerBase
             html,body{margin:0;background:var(--page)}body{color:var(--text);font:14px/1.6 system-ui,-apple-system,'Segoe UI','Malgun Gothic',sans-serif;word-break:keep-all}
             main{max-width:760px;margin:0 auto;padding:32px 16px}h1{font-size:22px;margin:0 0 16px}
             .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}.sub{color:var(--text2)}
+            h2{font-size:17px;margin:28px 0 10px}ul{padding-left:20px}a{color:#3987e5}.reports li{margin:4px 0}
             </style>
         """;
 
     private static string T(PluginSettings settings, string korean, string english) => settings.English ? english : korean;
+
+    private static string ReportList(PluginSettings settings)
+    {
+        var files = settings.ReportsDir is null
+            ? []
+            : new DirectoryInfo(settings.ReportsDir).GetFiles("RamCleaner-report-*.html").OrderByDescending(f => f.Name, StringComparer.Ordinal).Take(15).ToArray();
+        if (files.Length == 0)
+        {
+            return "<p class=\"sub\">" + WebUtility.HtmlEncode(T(settings, "아직 없습니다. 레이드가 한 판 끝나면 만들어집니다('16. 세션 보고서'가 켜져 있을 때).",
+                "None yet. One is written after a raid ('16. Session report' on).")) + "</p>";
+        }
+
+        return "<ul class=\"reports\">" + string.Join("", files.Select(f =>
+            $"<li><a href=\"reports/{WebUtility.HtmlEncode(f.Name)}\">{f.LastWriteTime:yyyy-MM-dd HH:mm}</a> <span class=\"sub\">· {f.Length / 1024} KB</span></li>")) + "</ul>";
+    }
 
     /// <summary>The plugin's port, on/off and language, read from its BepInEx config file on every request (it is tiny).</summary>
     private sealed class PluginSettings
@@ -133,6 +180,8 @@ public sealed class PageProxyController : ControllerBase
         public int Port = 6977;
         public bool Enabled = true;
         public bool English;
+        public string? ConfigPath;
+        public string? ReportsDir;
 
         public static PluginSettings Read()
         {
@@ -142,6 +191,10 @@ public sealed class PageProxyController : ControllerBase
             {
                 return result;
             }
+
+            result.ConfigPath = file;
+            var reports = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(file)!)!, "RamCleaner"); // BepInEx\RamCleaner
+            result.ReportsDir = Directory.Exists(reports) ? reports : null;
 
             try
             {

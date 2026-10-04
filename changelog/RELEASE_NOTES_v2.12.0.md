@@ -80,7 +80,7 @@
 6. maschine-ModProfiler(F10)와 같이 쓰는 건 여전히 권장하지 않습니다(처음 켤 때 큰 멈춤).
 7. 웹 페이지가 안 열리면 F12 '현재 상태'의 **'웹 페이지:'** 줄을 봐 주세요. '시작 실패'면 다른 프로그램이 6977번을 쓰는 중이니 18번에서 포트 번호를 바꾸세요. 주소는 `localhost` 대신 **`127.0.0.1`** 로 입력해야 합니다.
 8. 레이드 로딩처럼 게임이 잠깐 멈춰 있으면 웹 페이지에 "게임이 응답하지 않습니다"가 뜨고 저절로 다시 연결합니다.
-9. 런처 '모드 페이지' 목록에 RAM Cleaner가 안 보이면 `SPT_Runtime\user\mods\RamCleanerInterval.Server\` 가 있는지 보고 서버를 다시 켜 주세요. 목록에서 눌렀는데 "연결할 수 없습니다"가 나오면 게임이 꺼져 있거나 서버와 게임이 다른 PC(FIKA 등)인 경우입니다.
+9. 런처 '모드 페이지' 목록에 RAM Cleaner가 안 보이면 `SPT_Runtime\user\mods\RamCleanerInterval.Server\` 가 있는지 보고 서버를 다시 켜 주세요. 목록에서 눌렀는데 "연결할 수 없습니다"가 나오면 게임이 꺼져 있거나 서버와 게임이 다른 PC(FIKA 등)인 경우입니다. 그 화면에서도 지난 세션 보고서는 볼 수 있고, 게임이 켜지면 자동으로 실시간 화면으로 넘어갑니다.
 
 - **제보 방법**
 
@@ -175,7 +175,7 @@
 6. Using maschine-ModProfiler (F10) at the same time is still not recommended (big freeze when it first turns on).
 7. If the web page doesn't open, check the **"web page:"** line in the F12 status. "could not start" means another program uses port 6977 — change the port in section 18. Type **`127.0.0.1`**, not `localhost`.
 8. While the game is frozen for a moment (e.g. loading a raid) the page says "the game did not answer" and reconnects by itself.
-9. If RAM Cleaner is missing from the launcher's mod pages, check that `SPT_Runtime\user\mods\RamCleanerInterval.Server\` exists and restart the server. If it says "cannot reach" when opened from there, the game is closed or runs on a different PC than the server (FIKA etc.).
+9. If RAM Cleaner is missing from the launcher's mod pages, check that `SPT_Runtime\user\mods\RamCleanerInterval.Server\` exists and restart the server. If it says "cannot reach" when opened from there, the game is closed or runs on a different PC than the server (FIKA etc.). Past session reports are still listed there, and it switches to the live page by itself once the game is up.
 
 - **How to report**
 
