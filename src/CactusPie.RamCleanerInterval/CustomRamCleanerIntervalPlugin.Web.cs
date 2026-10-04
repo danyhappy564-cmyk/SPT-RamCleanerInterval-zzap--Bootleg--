@@ -32,6 +32,7 @@ namespace CactusPie.RamCleanerInterval
         {
             _web = new WebServer(Logger, HandleWeb);
             _launcherPageUrl = LauncherPageUrl;
+            ExportSettingsCatalog();
             EventHandler restart = (_, __) => _webRestartAt = Time.realtimeSinceStartup + 0.5f; // after the reply has gone out
             _webEnabled.SettingChanged += restart;
             _webPort.SettingChanged += restart;
@@ -118,6 +119,67 @@ namespace CactusPie.RamCleanerInterval
             }
 
             Application.OpenURL(_web.Url);
+        }
+
+        /// <summary>
+        /// Writes BepInEx\RamCleaner\settings-catalog.json: every F12 entry with its names and descriptions in both
+        /// languages, type, range and default (no values). The optional SPT server part reads it to show and edit the
+        /// settings straight in the .cfg file while the game is closed, so its launcher page works without the game.
+        /// </summary>
+        private void ExportSettingsCatalog()
+        {
+            try
+            {
+                var json = new StringBuilder(96 * 1024);
+                json.Append("{\"version\":").Append(WebServer.Str(typeof(CustomRamCleanerIntervalPlugin).Assembly.GetName().Version.ToString(3)))
+                    .Append(",\"configFile\":").Append(WebServer.Str(System.IO.Path.GetFileName(Config.ConfigFilePath))).Append(",\"entries\":[");
+                bool first = true;
+                foreach (LocalizedEntry e in _localized)
+                {
+                    if (e.Entry == null || e.Attributes.CustomDrawer != null || e.Attributes.Browsable == false)
+                    {
+                        continue;
+                    }
+
+                    ConfigEntryBase entry = e.Entry;
+                    Loc.Settings.TryGetValue(e.Key, out string[] english);
+                    string categoryEn = Loc.Categories.TryGetValue(e.CategoryKo, out string c) ? c : e.CategoryKo;
+                    Type type = entry.SettingType;
+                    string kind = type == typeof(bool) ? "bool" : type == typeof(int) ? "int" : type == typeof(float) ? "float" : "text";
+                    string extra = string.Empty;
+                    switch (entry.Description.AcceptableValues)
+                    {
+                        case AcceptableValueRange<int> ints:
+                            extra = ",\"min\":" + ints.MinValue + ",\"max\":" + ints.MaxValue;
+                            break;
+                        case AcceptableValueRange<float> floats:
+                            extra = ",\"min\":" + WebServer.Num(floats.MinValue) + ",\"max\":" + WebServer.Num(floats.MaxValue);
+                            break;
+                        case AcceptableValueList<string> list:
+                            kind = "list";
+                            extra = ",\"options\":[" + string.Join(",", list.AcceptableValues.Select(WebServer.Str)) + "]";
+                            break;
+                    }
+
+                    json.Append(first ? string.Empty : ",").Append("{\"section\":").Append(WebServer.Str(entry.Definition.Section))
+                        .Append(",\"key\":").Append(WebServer.Str(entry.Definition.Key))
+                        .Append(",\"catKo\":").Append(WebServer.Str(e.CategoryKo)).Append(",\"catEn\":").Append(WebServer.Str(categoryEn))
+                        .Append(",\"nameKo\":").Append(WebServer.Str(e.NameKo)).Append(",\"nameEn\":").Append(WebServer.Str(english?[0] ?? e.NameKo))
+                        .Append(",\"descKo\":").Append(WebServer.Str(e.DescriptionKo)).Append(",\"descEn\":").Append(WebServer.Str(english?[1] ?? e.DescriptionKo))
+                        .Append(",\"order\":").Append(e.Attributes.Order ?? 0)
+                        .Append(",\"kind\":\"").Append(kind).Append('"')
+                        .Append(",\"def\":").Append(WebServer.Str(TomlTypeConverter.ConvertToString(entry.DefaultValue, type))).Append(extra).Append('}');
+                    first = false;
+                }
+
+                string directory = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "RamCleaner");
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(System.IO.Path.Combine(directory, "settings-catalog.json"), json.Append("]}").ToString(), new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning($"[web] could not write the settings list for the server page: {ex.Message}");
+            }
         }
 
         /// <summary>Runs <paramref name="work"/> in Update and waits for it (web thread). Throws on timeout.</summary>

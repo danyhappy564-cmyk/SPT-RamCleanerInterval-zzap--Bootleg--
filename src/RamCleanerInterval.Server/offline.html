@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RAM Cleaner</title>
+<style>
+:root{color-scheme:light;--page:#f9f9f7;--surface:#fcfcfb;--text:#0b0b0b;--text2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
+--border:rgba(11,11,11,.10);--accent:#2a78d6;--ok:#1a7f37;--warn:#b7791f;--bad:#cf222e}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--page:#0d0d0d;--surface:#1a1a19;--text:#fff;--text2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;
+--axis:#383835;--border:rgba(255,255,255,.10);--accent:#3987e5;--ok:#3fb950;--warn:#d29922;--bad:#f85149}}
+html,body{margin:0;background:var(--page)}
+body{color:var(--text);font:14px/1.5 system-ui,-apple-system,'Segoe UI','Malgun Gothic',sans-serif}
+html:lang(ko) body{word-break:keep-all}
+main{max-width:1100px;margin:0 auto;padding:24px 16px 48px;box-sizing:border-box}
+.nav{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 20px}.brand{font-weight:600;margin-right:8px}
+.nav button.tab{padding:6px 12px}.nav button.on{background:var(--accent);border-color:transparent;color:#fff}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:0 0 8px}
+.sub{color:var(--text2);margin:0 0 16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin:0 0 20px}
+.banner{border-color:var(--warn)}.banner b{color:var(--warn)}
+button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer}
+button:hover{border-color:var(--accent)}button:disabled{opacity:.5;cursor:default}
+#lang{margin-left:auto;font-size:12px;padding:5px 10px}
+.msg{min-height:1.5em;margin:8px 0 0;color:var(--text2)}
+input[type=number],input[type=search],input[type=text],select{font:inherit;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);box-sizing:border-box}
+input[type=search]{width:100%;margin:0 0 8px}input[type=number]{width:96px}
+input[type=range]{flex:1 1 140px;min-width:120px;accent-color:var(--accent)}
+.row{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,340px);gap:8px 20px;padding:12px 0;border-top:1px solid var(--grid);align-items:start}
+.row:first-of-type{border-top:0}
+.name{font-weight:600}.desc{color:var(--text2);font-size:13px;white-space:pre-line;margin-top:2px;overflow-wrap:anywhere}
+.def{color:var(--muted);font-size:11px;margin-top:4px}
+.ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}.ctl select,.ctl input[type=text]{width:100%}
+.state{font-size:12px;min-width:4.5em;text-align:right;color:var(--muted)}.state.ok{color:var(--ok)}.state.err{color:var(--bad)}
+.reset{font-size:12px;padding:3px 8px}
+.switch{position:relative;display:inline-block;width:46px;height:26px;flex:none}
+.switch input{opacity:0;width:0;height:0}
+.switch span{position:absolute;inset:0;background:var(--axis);border-radius:13px;transition:.15s;cursor:pointer}
+.switch span:before{content:'';position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.15s}
+.switch input:checked+span{background:var(--accent)}.switch input:checked+span:before{transform:translateX(20px)}
+.switch input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.reports{list-style:none;padding:0;margin:0}.reports li{padding:8px 0;border-top:1px solid var(--grid)}.reports li:first-child{border-top:0}
+a{color:var(--accent)}
+.hidden{display:none!important}
+@media (max-width:700px){.row{grid-template-columns:1fr}.ctl{justify-content:flex-start}}
+</style>
+</head>
+<body>
+<main>
+  <nav class="nav"><span class="brand">RAM Cleaner</span>
+    <button type="button" class="tab on" data-tab="settings" id="tabSettings"></button>
+    <button type="button" class="tab" data-tab="reports" id="tabReports"></button>
+    <button type="button" id="lang"></button></nav>
+  <section class="card banner"><b id="bannerTitle"></b><p class="sub" id="bannerText" style="margin:6px 0 0"></p></section>
+  <div id="pageSettings">
+    <h1 id="settingsTitle"></h1><p class="sub" id="settingsIntro"></p>
+    <input type="search" id="q"><p class="msg" id="msg" role="status"></p><div id="list"></div>
+  </div>
+  <div id="pageReports" class="hidden">
+    <h1 id="reportsTitle"></h1><p class="sub" id="reportsIntro"></p><section class="card"><ul class="reports" id="reports"></ul></section>
+  </div>
+</main>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var lang = '', state = null, tab = 'settings', userLang = false;
+  try { lang = localStorage.getItem('rc-lang') || ''; userLang = !!lang; } catch (e) { lang = ''; }
+  function t(ko, en) { return lang === 'en' ? en : ko; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  function texts() {
+    document.documentElement.lang = lang;
+    $('lang').textContent = lang === 'en' ? '한국어' : 'English';
+    $('tabSettings').textContent = t('설정', 'Settings');
+    $('tabReports').textContent = t('지난 세션 보고서', 'Past session reports');
+    $('bannerTitle').textContent = t('게임이 꺼져 있어 실시간 화면 대신 설정과 지난 보고서를 보여 줍니다.', 'The game is not running, so this shows the settings and past reports instead of the live view.');
+    $('bannerText').textContent = (state && state.reason ? state.reason + ' — ' : '') +
+      t('게임을 켜면 이 페이지가 저절로 실시간 화면(메모리·FPS 그래프, 진행 중인 레이드 보고서)으로 바뀝니다.', 'Once the game is up this page switches to the live view (memory/FPS charts, the raid in progress) by itself.');
+    $('settingsTitle').textContent = t('설정', 'Settings');
+    $('settingsIntro').textContent = t('게임 F12의 RAM 클리너 설정과 같습니다. 게임이 꺼져 있어 바꾸면 설정 파일에 바로 저장되고, 다음에 게임을 켤 때 적용됩니다.',
+      'The same as RAM Cleaner in the game\'s F12. With the game closed, changes are saved straight to its config file and used at the next game start.');
+    $('reportsTitle').textContent = t('지난 세션 보고서', 'Past session reports');
+    $('reportsIntro').textContent = t('게임을 켤 때마다 하나씩 만들어지는 보고서입니다(최근 15개). 판별 표, 메모리·FPS 그래프, 끊김 원인, 재시작 판단이 들어 있습니다.',
+      'One report per game start (newest 15): per-raid table, memory and FPS charts, stutter causes and restart advice.');
+    $('q').placeholder = t('설정 검색 (예: 서버, 끊김, GC)', 'Search settings (e.g. server, stutter, GC)');
+    $('q').setAttribute('aria-label', t('설정 검색', 'Search settings'));
+  }
+
+  function m(it, field) { return it.meta[field + (lang === 'en' ? 'En' : 'Ko')]; }
+
+  function label(it, v) { return it.meta.kind === 'bool' ? (v === 'true' ? t('켜짐', 'on') : t('꺼짐', 'off')) : v; }
+
+  function control(it) {
+    var k = it.meta.kind, name = esc(m(it, 'name')), v = esc(it.v);
+    if (k === 'bool') return '<label class="switch"><input type="checkbox"' + (it.v === 'true' ? ' checked' : '') + ' aria-label="' + name + '"><span></span></label>';
+    if (k === 'list') return '<select aria-label="' + name + '">' + it.meta.options.map(function (o) { return '<option' + (o === it.v ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>';
+    if ((k === 'int' || k === 'float') && it.meta.min != null) {
+      var span = it.meta.max - it.meta.min, step = k === 'int' ? 1 : (span <= 2 ? 0.01 : span <= 20 ? 0.1 : 0.5);
+      return '<input type="range" min="' + it.meta.min + '" max="' + it.meta.max + '" step="' + step + '" value="' + v + '" aria-label="' + name + '">' +
+        '<input type="number" min="' + it.meta.min + '" max="' + it.meta.max + '" step="' + (k === 'int' ? 1 : 'any') + '" value="' + v + '">';
+    }
+    if (k === 'int' || k === 'float') return '<input type="number" step="' + (k === 'int' ? 1 : 'any') + '" value="' + v + '" aria-label="' + name + '">';
+    return '<input type="text" value="' + v + '" aria-label="' + name + '">';
+  }
+
+  function setValue(row, it, v) {
+    it.v = v;
+    row.querySelectorAll('input,select').forEach(function (el) { if (el.type === 'checkbox') el.checked = v === 'true'; else el.value = v; });
+    row.querySelector('.reset').classList.toggle('hidden', v === it.meta.def);
+  }
+
+  function save(row, it, v) {
+    var st = row.querySelector('.state');
+    st.className = 'state'; st.textContent = t('저장 중', 'saving');
+    fetch('offline/api/set', {
+      method: 'POST', cache: 'no-store',
+      headers: { 'X-RamCleaner': '1', 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'id=' + encodeURIComponent(it.id) + '&value=' + encodeURIComponent(v)
+    }).then(function (r) {
+      if (r.status === 403 || r.redirected) throw new Error(t('관리자만 바꿀 수 있습니다 (SPT 웹 패널 로그인)', 'Only an administrator can change this (SPT web panel login)'));
+      return r.json();
+    }).then(function (r) {
+      if (r.online) { location.reload(); return; }
+      if (!r.ok) { st.className = 'state err'; st.textContent = r.error || t('실패', 'failed'); if (r.v != null) setValue(row, it, r.v); return; }
+      setValue(row, it, r.v);
+      st.className = 'state ok'; st.textContent = t('✓ 저장됨', '✓ saved');
+      $('msg').textContent = t('설정 파일에 저장했습니다 — 다음에 게임을 켤 때 적용됩니다.', 'Saved to the config file — used at the next game start.');
+      if (it.id === '0. Mode|Language' && !userLang) { lang = r.v === 'English' ? 'en' : 'ko'; texts(); render(); renderReports(); }
+      setTimeout(function () { if (st.textContent === t('✓ 저장됨', '✓ saved')) st.textContent = ''; }, 2500);
+    }).catch(function (e) { st.className = 'state err'; st.textContent = e.message || t('서버 연결 실패', 'server unreachable'); setValue(row, it, it.v); });
+  }
+
+  function render() {
+    var list = $('list'); list.innerHTML = '';
+    if (!state.settings) {
+      list.innerHTML = '<section class="card"><p>' + esc(t('설정 목록이 아직 없습니다. RAM 클리너 2.12.0 이상으로 게임을 한 번 켜면 만들어집니다(BepInEx\\RamCleaner\\settings-catalog.json).',
+        'No settings list yet. Start the game once with RAM Cleaner 2.12.0 or newer to create it (BepInEx\\RamCleaner\\settings-catalog.json).')) +
+        (state.configPath ? '' : '<br>' + esc(t('RAM 클리너 설정 파일도 찾지 못했습니다(서버와 게임이 같은 SPT 폴더에 있어야 합니다).', 'The RAM Cleaner config file was not found either (the server and the game must share one SPT folder).'))) + '</p></section>';
+      return;
+    }
+    var groups = {}, order = [];
+    state.settings.forEach(function (it) { var c = it.meta.catKo; if (!groups[c]) { groups[c] = []; order.push(c); } groups[c].push(it); });
+    order.sort();
+    order.forEach(function (cat) {
+      var items = groups[cat].slice().sort(function (a, b) { return b.meta.order - a.meta.order; });
+      var sec = document.createElement('section'); sec.className = 'card set';
+      sec.innerHTML = '<h2>' + esc(m(items[0], 'cat')) + '</h2>';
+      items.forEach(function (it) {
+        var row = document.createElement('div'); row.className = 'row';
+        row.setAttribute('data-q', [it.meta.catKo, it.meta.catEn, it.meta.nameKo, it.meta.nameEn, it.meta.descKo, it.meta.descEn, it.id].join(' ').toLowerCase());
+        row.innerHTML = '<div><div class="name">' + esc(m(it, 'name')) + '</div><div class="desc">' + esc(m(it, 'desc')) +
+          '</div><div class="def">' + esc(t('기본값: ', 'Default: ') + label(it, it.meta.def)) + '</div></div><div class="ctl">' + control(it) +
+          '<button type="button" class="reset' + (it.v === it.meta.def ? ' hidden' : '') + '">' + esc(t('기본값으로', 'Reset')) + '</button><span class="state"></span></div>';
+        row.querySelectorAll('input,select').forEach(function (el) {
+          if (el.type === 'range') { var num = row.querySelector('input[type=number]'); el.addEventListener('input', function () { num.value = el.value; }); }
+          el.addEventListener('change', function () { save(row, it, el.type === 'checkbox' ? (el.checked ? 'true' : 'false') : el.value); });
+        });
+        row.querySelector('.reset').addEventListener('click', function () { save(row, it, it.meta.def); });
+        sec.appendChild(row);
+      });
+      list.appendChild(sec);
+    });
+    filter();
+  }
+
+  function renderReports() {
+    $('reports').innerHTML = state.reports.length
+      ? state.reports.map(function (r) { return '<li><a href="reports/' + encodeURIComponent(r.name) + '" target="_blank" rel="noopener">' + esc(r.time) + '</a> <span class="sub">· ' + r.kb + ' KB</span></li>'; }).join('')
+      : '<li class="sub">' + esc(t('아직 없습니다. 레이드가 한 판 끝나면 만들어집니다(\'16. 세션 보고서\'가 켜져 있을 때).', 'None yet. One is written after a raid (\'16. Session report\' on).')) + '</li>';
+  }
+
+  function filter() {
+    var q = $('q').value.trim().toLowerCase();
+    document.querySelectorAll('.set').forEach(function (sec) {
+      var any = false;
+      sec.querySelectorAll('.row').forEach(function (row) { var show = !q || row.getAttribute('data-q').indexOf(q) >= 0; row.classList.toggle('hidden', !show); any = any || show; });
+      sec.classList.toggle('hidden', !any);
+    });
+  }
+
+  function load(first) {
+    return fetch('offline/api/state', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (s) {
+      if (s.online) { location.reload(); return; } // the game's page is up: the same address now serves the live view
+      state = s;
+      if (!lang) lang = s.lang || 'ko';
+      texts();
+      if (first) { render(); renderReports(); }
+    }).catch(function () { $('bannerText').textContent = t('SPT 서버에 연결할 수 없습니다.', 'Cannot reach the SPT server.'); });
+  }
+
+  document.querySelectorAll('.tab').forEach(function (b) {
+    b.addEventListener('click', function () {
+      tab = b.getAttribute('data-tab');
+      document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('on', x === b); });
+      $('pageSettings').classList.toggle('hidden', tab !== 'settings');
+      $('pageReports').classList.toggle('hidden', tab !== 'reports');
+    });
+  });
+  $('lang').addEventListener('click', function () {
+    lang = lang === 'en' ? 'ko' : 'en'; userLang = true;
+    try { localStorage.setItem('rc-lang', lang); } catch (e) { /* private mode */ }
+    texts(); render(); renderReports();
+  });
+  $('q').addEventListener('input', filter);
+  load(true);
+  setInterval(function () { if (!document.hidden) load(false); }, 5000);
+})();
+</script>
+</body>
+</html>

@@ -1,16 +1,22 @@
-using System.Net;
-using System.Reflection;
+using System.Net.Sockets;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace RamCleanerInterval.Server;
 
 /// <summary>
-/// <c>/ramcleaner/...</c> on the SPT server → <c>http://127.0.0.1:&lt;port&gt;/...</c>, the page the RAM cleaner plugin
-/// serves from inside the game. The game's pages use relative links, so they work unchanged under this prefix.
-/// Port, on/off and language come from the plugin's own config file (BepInEx\config next to SPT_Runtime), so this
-/// only works when the server and the game run on the same PC. Viewing follows the SPT web panel's login rules;
-/// changes (POST) need an administrator, like SPT's own config editor.
+/// The RAM cleaner's launcher mod page, <c>/ramcleaner/</c> on the SPT server.
+/// <list type="bullet">
+///   <item>Game running: forwards to the page the plugin serves inside the game (<c>http://127.0.0.1:&lt;port&gt;/...</c>) —
+///     live numbers, session report with the raid in progress, settings applied at once. Its links are relative, so
+///     they work unchanged under this prefix.</item>
+///   <item>Game closed (like the other mod pages, which only need the server): this server's own page — every
+///     setting, edited straight in the plugin's .cfg (used at the next game start), and the past session reports.
+///     It switches to the live page by itself once the game answers.</item>
+/// </list>
+/// Same PC only (it reads BepInEx next to SPT_Runtime). Viewing follows the SPT web panel's login rules; changes
+/// (POST) need an administrator, like SPT's own config editor, plus the page's own header.
 /// </summary>
 [Route("ramcleaner")]
 [Authorize]
@@ -18,10 +24,21 @@ namespace RamCleanerInterval.Server;
 public sealed class PageProxyController : ControllerBase
 {
     private const string ChangeHeader = "X-RamCleaner";
-    private const string ConfigFile = "com.cactuspie.ramcleanerinterval.cfg";
+
+    private static readonly Lazy<string> OfflineHtml = new(() =>
+    {
+        using var stream = typeof(PageProxyController).Assembly.GetManifestResourceStream("RamCleanerInterval.Server.offline.html")
+                           ?? throw new InvalidOperationException("offline.html is not embedded");
+        return new StreamReader(stream).ReadToEnd();
+    });
 
     // The game answers within its own 5 s main-thread timeout; keep a little more than that.
-    private static readonly HttpClient Client = new(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false })
+    private static readonly HttpClient Client = new(new SocketsHttpHandler
+    {
+        UseProxy = false,
+        AllowAutoRedirect = false,
+        ConnectTimeout = TimeSpan.FromSeconds(2),
+    })
     {
         Timeout = TimeSpan.FromSeconds(7),
     };
@@ -29,7 +46,7 @@ public sealed class PageProxyController : ControllerBase
     [HttpGet("")]
     public Task<IActionResult> Root() => Request.Path.Value?.EndsWith('/') == true
         ? Forward(string.Empty)
-        : Task.FromResult<IActionResult>(Redirect("/ramcleaner/")); // the game's relative links need the trailing slash
+        : Task.FromResult<IActionResult>(Redirect("/ramcleaner/")); // relative links need the trailing slash
 
     [HttpGet("{**path}")]
     public Task<IActionResult> Get(string path) => Forward(path);
@@ -38,19 +55,98 @@ public sealed class PageProxyController : ControllerBase
     [Authorize(Policy = "Administrator")]
     public Task<IActionResult> Post(string path) => Forward(path);
 
+    // ---------------------------------------------------------------- game closed: this server's own page
+
+    /// <summary>Settings (catalog + .cfg values), reports and why the game's page is not answering.</summary>
+    [HttpGet("offline/api/state")]
+    public async Task<IActionResult> OfflineState()
+    {
+        var files = PluginFiles.Read();
+        var (online, reason) = await Probe(files);
+        var catalog = files.Catalog();
+        var entries = catalog?.GetProperty("entries").EnumerateArray().Select(e =>
+        {
+            var id = e.GetProperty("section").GetString() + "|" + e.GetProperty("key").GetString();
+            return new { id, entry = e, v = files.Values.GetValueOrDefault(id) };
+        }).Where(x => x.v is not null).ToList();
+
+        return Json(new
+        {
+            online,
+            reason,
+            lang = files.English ? "en" : "ko",
+            port = files.Port,
+            webEnabled = files.Enabled,
+            configPath = files.ConfigPath,
+            catalogVersion = catalog?.GetProperty("version").GetString(),
+            settings = entries?.Select(x => new { x.id, x.v, meta = x.entry }),
+            reports = files.Reports(15).Select(f => new { name = f.Name, time = f.LastWriteTime.ToString("yyyy-MM-dd HH:mm"), kb = f.Length / 1024 }),
+        });
+    }
+
+    [HttpPost("offline/api/set")]
+    [Authorize(Policy = "Administrator")]
+    public async Task<IActionResult> OfflineSet()
+    {
+        if (Request.Headers[ChangeHeader] != "1")
+        {
+            return StatusCode(403, "Changes are only accepted from the RAM cleaner page.");
+        }
+
+        var form = await Request.ReadFormAsync();
+        string id = form["id"].ToString(), value = form["value"].ToString();
+        var files = PluginFiles.Read();
+        if ((await Probe(files)).online)
+        {
+            // The running game holds these values in memory and would write over the file: use the live page.
+            return Json(new { ok = false, online = true, error = files.English ? "the game is running — reload for the live page" : "게임이 켜져 있습니다 — 새로 고침하면 실시간 화면으로 바뀝니다" });
+        }
+
+        var entry = files.Catalog()?.GetProperty("entries").EnumerateArray()
+            .FirstOrDefault(e => e.GetProperty("section").GetString() + "|" + e.GetProperty("key").GetString() == id);
+        if (entry is null || entry.Value.ValueKind == JsonValueKind.Undefined)
+        {
+            return Json(new { ok = false, error = "unknown setting" });
+        }
+
+        try
+        {
+            return Json(new { ok = true, v = files.Write(entry.Value, value) });
+        }
+        catch (Exception ex) when (ex is FormatException or IOException or UnauthorizedAccessException)
+        {
+            return Json(new { ok = false, error = ex.Message, v = files.Values.GetValueOrDefault(id) });
+        }
+    }
+
+    /// <summary>Past session reports (BepInEx\RamCleaner\RamCleaner-report-*.html) — readable without the game.</summary>
+    [HttpGet("reports/{name}")]
+    public IActionResult Report(string name)
+    {
+        var dir = PluginFiles.Read().DataDir;
+        if (dir is null || Path.GetFileName(name) != name || !name.StartsWith("RamCleaner-report-", StringComparison.Ordinal) ||
+            !name.EndsWith(".html", StringComparison.Ordinal) || !System.IO.File.Exists(Path.Combine(dir, name)))
+        {
+            return NotFound();
+        }
+
+        Response.Headers.CacheControl = "no-store";
+        return PhysicalFile(Path.Combine(dir, name), "text/html; charset=utf-8");
+    }
+
+    // ---------------------------------------------------------------- game running: forward
+
     private async Task<IActionResult> Forward(string path)
     {
         Response.Headers.CacheControl = "no-store";
-        var settings = PluginSettings.Read();
+        var files = PluginFiles.Read();
         bool api = path.StartsWith("api/", StringComparison.Ordinal);
-        if (!settings.Enabled)
+        if (!files.Enabled)
         {
-            return Offline(api, settings, T(settings,
-                "RAM 클리너의 웹 페이지가 꺼져 있습니다. 게임 F12 → RAM 클리너 → '18. 웹 페이지' → '웹 페이지 켜기'를 켜세요.",
-                "The RAM cleaner's web page is turned off. In the game: F12 → RAM Cleaner → '18. Web page' → 'Enable the web page'."));
+            return Offline(api, files.English ? "the game's web page is turned off (F12 → RAM Cleaner → 18)" : "게임 쪽 웹 페이지가 꺼져 있음(F12 → RAM 클리너 → 18번)");
         }
 
-        using var request = new HttpRequestMessage(new HttpMethod(Request.Method), $"http://127.0.0.1:{settings.Port}/{path}{Request.QueryString}");
+        using var request = new HttpRequestMessage(new HttpMethod(Request.Method), $"http://127.0.0.1:{files.Port}/{path}{Request.QueryString}");
         if (HttpMethods.IsPost(Request.Method))
         {
             if (Request.Headers[ChangeHeader] != "1")
@@ -86,172 +182,42 @@ public sealed class PageProxyController : ControllerBase
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            // Refused = nothing listens (game closed, or its page failed to start); timeout = the game is busy (loading).
-            var why = ex is TaskCanceledException
-                ? T(settings, "시간 초과 — 게임이 켜져 있지만 응답이 늦습니다(레이드 로딩 중일 수 있음).", "timed out — the game is running but slow to answer (maybe loading a raid).")
-                : T(settings, "연결 거부 — 게임이 꺼져 있거나, 게임 안 웹 페이지가 시작되지 못했습니다.", "connection refused — the game is closed, or its web page failed to start.");
-            return Offline(api, settings, T(settings,
-                $"게임 안의 RAM 클리너 페이지(127.0.0.1:{settings.Port})에 연결할 수 없습니다. {why}",
-                $"Cannot reach the RAM cleaner page inside the game (127.0.0.1:{settings.Port}): {why}"));
+            return Offline(api, Reason(ex, files));
         }
     }
 
-    /// <summary>Past session reports (BepInEx\RamCleaner\RamCleaner-report-*.html) — readable without the game.</summary>
-    [HttpGet("reports/{name}")]
-    public IActionResult Report(string name)
+    /// <summary>The game pages' scripts get JSON they show as an error; a page load gets this server's own page.</summary>
+    private IActionResult Offline(bool api, string reason) => api
+        ? new ContentResult { StatusCode = 503, ContentType = "application/json; charset=utf-8", Content = JsonSerializer.Serialize(new { error = reason }) }
+        : new ContentResult { StatusCode = 200, ContentType = "text/html; charset=utf-8", Content = OfflineHtml.Value };
+
+    private static async Task<(bool online, string reason)> Probe(PluginFiles files)
     {
-        var dir = PluginSettings.Read().ReportsDir;
-        if (dir is null || Path.GetFileName(name) != name || !name.StartsWith("RamCleaner-report-", StringComparison.Ordinal) ||
-            !name.EndsWith(".html", StringComparison.Ordinal) || !System.IO.File.Exists(Path.Combine(dir, name)))
+        if (!files.Enabled)
         {
-            return NotFound();
+            return (false, files.English ? "the game's web page is turned off (F12 → RAM Cleaner → 18)" : "게임 쪽 웹 페이지가 꺼져 있음(F12 → RAM 클리너 → 18번)");
         }
 
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var reply = await Client.GetAsync($"http://127.0.0.1:{files.Port}/favicon.ico", cts.Token);
+            return (true, string.Empty);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+        {
+            return (false, Reason(ex, files));
+        }
+    }
+
+    /// <summary>Refused = nothing listens (game closed, or its page failed to start); timeout = the game is busy.</summary>
+    private static string Reason(Exception ex, PluginFiles files) => ex is HttpRequestException
+        ? files.English ? $"no game page on 127.0.0.1:{files.Port} (the game is closed, or its page failed to start)" : $"127.0.0.1:{files.Port}에 게임 쪽 페이지 없음 (게임이 꺼져 있거나 게임 쪽 페이지가 시작되지 못함)"
+        : files.English ? $"127.0.0.1:{files.Port} did not answer in time (the game may be loading a raid)" : $"127.0.0.1:{files.Port}이(가) 제때 응답하지 않음 (레이드 로딩 중일 수 있음)";
+
+    private ContentResult Json(object value)
+    {
         Response.Headers.CacheControl = "no-store";
-        return PhysicalFile(Path.Combine(dir, name), "text/html; charset=utf-8");
-    }
-
-    /// <summary>JSON for the page's scripts (they show "error"), or a small page that retries every 5 s.</summary>
-    private ContentResult Offline(bool api, PluginSettings settings, string message)
-    {
-        if (api)
-        {
-            return new ContentResult
-            {
-                StatusCode = 503,
-                ContentType = "application/json; charset=utf-8",
-                Content = System.Text.Json.JsonSerializer.Serialize(new { error = message }),
-            };
-        }
-
-        var title = T(settings, "RAM 클리너", "RAM Cleaner");
-        var checks = string.Join("", new[]
-        {
-            settings.ConfigPath is null
-                ? T(settings, "게임 쪽 설정 파일을 못 찾음(BepInEx\\config) — 기본 포트 6977로 시도", "game-side config file not found (BepInEx\\config) — trying the default port 6977")
-                : T(settings, $"설정 파일: {settings.ConfigPath} · 포트 {settings.Port}", $"config file: {settings.ConfigPath} · port {settings.Port}"),
-            T(settings, "게임이 켜져 있는데도 이 화면이면: 게임 F12 → RAM 클리너 → '현재 상태'의 '웹 페이지:' 줄을 확인하세요.",
-                        "If the game is running and you still see this: check the 'web page:' line in the game's F12 → RAM Cleaner → 'Status'."),
-        }.Select(line => "<li>" + WebUtility.HtmlEncode(line) + "</li>"));
-        var reports = ReportList(settings);
-        var html = $$"""
-            <!doctype html><html lang="{{T(settings, "ko", "en")}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-            <title>{{title}}</title>
-            {{OfflineCss}}</head><body><main><h1>{{title}}</h1><div class="card"><p>{{WebUtility.HtmlEncode(message)}}</p>
-            <ul class="sub">{{checks}}</ul>
-            <p class="sub" id="retry">{{T(settings, "게임 쪽 페이지가 열리면 자동으로 넘어갑니다(5초마다 확인).", "Switches over by itself once the game's page answers (checked every 5 s).")}}</p></div>
-            <h2>{{T(settings, "지난 세션 보고서 (게임 없이 열람)", "Past session reports (no game needed)")}}</h2>{{reports}}</main>
-            <script>setInterval(function(){fetch('api/live',{cache:'no-store'}).then(function(r){if(r.ok)location.reload()},function(){})},5000)</script></body></html>
-            """;
-        return new ContentResult { StatusCode = 503, ContentType = "text/html; charset=utf-8", Content = html };
-    }
-
-    private const string OfflineCss = """
-            <style>
-            :root{color-scheme:light;--page:#f9f9f7;--surface:#fcfcfb;--text:#0b0b0b;--text2:#52514e;--border:rgba(11,11,11,.10)}
-            @media (prefers-color-scheme:dark){:root{color-scheme:dark;--page:#0d0d0d;--surface:#1a1a19;--text:#fff;--text2:#c3c2b7;--border:rgba(255,255,255,.10)}}
-            html,body{margin:0;background:var(--page)}body{color:var(--text);font:14px/1.6 system-ui,-apple-system,'Segoe UI','Malgun Gothic',sans-serif;word-break:keep-all}
-            main{max-width:760px;margin:0 auto;padding:32px 16px}h1{font-size:22px;margin:0 0 16px}
-            .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}.sub{color:var(--text2)}
-            h2{font-size:17px;margin:28px 0 10px}ul{padding-left:20px}a{color:#3987e5}.reports li{margin:4px 0}
-            </style>
-        """;
-
-    private static string T(PluginSettings settings, string korean, string english) => settings.English ? english : korean;
-
-    private static string ReportList(PluginSettings settings)
-    {
-        var files = settings.ReportsDir is null
-            ? []
-            : new DirectoryInfo(settings.ReportsDir).GetFiles("RamCleaner-report-*.html").OrderByDescending(f => f.Name, StringComparer.Ordinal).Take(15).ToArray();
-        if (files.Length == 0)
-        {
-            return "<p class=\"sub\">" + WebUtility.HtmlEncode(T(settings, "아직 없습니다. 레이드가 한 판 끝나면 만들어집니다('16. 세션 보고서'가 켜져 있을 때).",
-                "None yet. One is written after a raid ('16. Session report' on).")) + "</p>";
-        }
-
-        return "<ul class=\"reports\">" + string.Join("", files.Select(f =>
-            $"<li><a href=\"reports/{WebUtility.HtmlEncode(f.Name)}\">{f.LastWriteTime:yyyy-MM-dd HH:mm}</a> <span class=\"sub\">· {f.Length / 1024} KB</span></li>")) + "</ul>";
-    }
-
-    /// <summary>The plugin's port, on/off and language, read from its BepInEx config file on every request (it is tiny).</summary>
-    private sealed class PluginSettings
-    {
-        public int Port = 6977;
-        public bool Enabled = true;
-        public bool English;
-        public string? ConfigPath;
-        public string? ReportsDir;
-
-        public static PluginSettings Read()
-        {
-            var result = new PluginSettings();
-            var file = FindConfig();
-            if (file is null)
-            {
-                return result;
-            }
-
-            result.ConfigPath = file;
-            var reports = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(file)!)!, "RamCleaner"); // BepInEx\RamCleaner
-            result.ReportsDir = Directory.Exists(reports) ? reports : null;
-
-            try
-            {
-                var section = string.Empty;
-                foreach (var raw in System.IO.File.ReadLines(file))
-                {
-                    var line = raw.Trim();
-                    if (line.StartsWith('[') && line.EndsWith(']'))
-                    {
-                        section = line[1..^1];
-                        continue;
-                    }
-
-                    var eq = line.IndexOf('=');
-                    if (eq <= 0 || line.StartsWith('#'))
-                    {
-                        continue;
-                    }
-
-                    var key = line[..eq].Trim();
-                    var value = line[(eq + 1)..].Trim();
-                    if (section == "18. Web page" && key == "Port" && int.TryParse(value, out var port) && port is > 0 and < 65536)
-                    {
-                        result.Port = port;
-                    }
-                    else if (section == "18. Web page" && key == "Enabled")
-                    {
-                        result.Enabled = !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
-                    }
-                    else if (section == "0. Mode" && key == "Language")
-                    {
-                        result.English = value == "English";
-                    }
-                }
-            }
-            catch (IOException)
-            {
-                // being written by the game right now: defaults for this request
-            }
-
-            return result;
-        }
-
-        private static string? FindConfig()
-        {
-            // SPT_Runtime\user\mods\RamCleanerInterval.Server\ → up to the SPT folder, which holds BepInEx\config.
-            var dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-            for (var i = 0; i < 6 && dir is not null; i++, dir = Path.GetDirectoryName(dir))
-            {
-                var candidate = Path.Combine(dir, "BepInEx", "config", ConfigFile);
-                if (System.IO.File.Exists(candidate))
-                {
-                    return candidate;
-                }
-            }
-
-            return null;
-        }
+        return Content(JsonSerializer.Serialize(value), "application/json; charset=utf-8");
     }
 }

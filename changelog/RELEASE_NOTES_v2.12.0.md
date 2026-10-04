@@ -24,7 +24,8 @@
 - **웹 페이지 — 게임 켜 둔 채 브라우저로 보기·설정 (F12 18번 — 모든 모드에서 켜짐)**
 
 1. 게임이 켜져 있는 동안 브라우저 주소창에 **`http://127.0.0.1:6977/`** 을 입력하면 열립니다. F12 → 05번 **'웹 페이지 열기'** 버튼으로도 열 수 있습니다.
-   **SPT 런처의 '모드 페이지' 목록**에도 'RAM Cleaner (RamCleanerInterval)'로 뜹니다(zip에 같이 든 서버 부품을 깔았을 때, 게임이 켜져 있고 서버와 같은 PC일 때).
+   **SPT 런처의 '모드 페이지' 목록**에도 'RAM Cleaner (RamCleanerInterval)'로 뜹니다(zip에 같이 든 서버 부품을 깔았을 때, 서버와 게임이 같은 PC일 때).
+   게임이 꺼져 있을 때도 열리며, 그때는 **설정 화면(다음 게임 실행 때 적용)과 지난 세션 보고서**를 보여 주고, 게임이 켜지면 저절로 실시간 화면으로 바뀝니다.
 2. **실시간** — 게임 메모리, 시스템 여유 RAM, 튕김 한도까지 남은 여유, FPS, 끊김, VRAM, SPT 서버, 여유 예상, 재시작 판단을 카드로 보여 주고 위험하면 노랑/빨강으로 바뀝니다. 최근 10분 메모리·FPS 그래프, 끊김 원인·모드별 부하 막대, 수동 정리 버튼도 있습니다.
 3. **세션 보고서** — 아래 16번 보고서와 같은 내용인데, **지금 하고 있는 레이드까지** 바로 들어갑니다.
 4. **설정** — F12의 모든 항목을 설명과 함께 보여 주고, 바꾸면 **게임에 바로 적용·저장**됩니다. 검색, '기본값으로' 버튼이 있습니다. 오른쪽 위 버튼으로 한국어/English 전환.
@@ -80,7 +81,7 @@
 6. maschine-ModProfiler(F10)와 같이 쓰는 건 여전히 권장하지 않습니다(처음 켤 때 큰 멈춤).
 7. 웹 페이지가 안 열리면 F12 '현재 상태'의 **'웹 페이지:'** 줄을 봐 주세요. '시작 실패'면 다른 프로그램이 6977번을 쓰는 중이니 18번에서 포트 번호를 바꾸세요. 주소는 `localhost` 대신 **`127.0.0.1`** 로 입력해야 합니다.
 8. 레이드 로딩처럼 게임이 잠깐 멈춰 있으면 웹 페이지에 "게임이 응답하지 않습니다"가 뜨고 저절로 다시 연결합니다.
-9. 런처 '모드 페이지' 목록에 RAM Cleaner가 안 보이면 `SPT_Runtime\user\mods\RamCleanerInterval.Server\` 가 있는지 보고 서버를 다시 켜 주세요. 목록에서 눌렀는데 "연결할 수 없습니다"가 나오면 게임이 꺼져 있거나 서버와 게임이 다른 PC(FIKA 등)인 경우입니다. 그 화면에서도 지난 세션 보고서는 볼 수 있고, 게임이 켜지면 자동으로 실시간 화면으로 넘어갑니다.
+9. 런처 '모드 페이지' 목록에 RAM Cleaner가 안 보이면 `SPT_Runtime\user\mods\RamCleanerInterval.Server\` 가 있는지 보고 서버를 다시 켜 주세요. 게임을 켰는데도 실시간 화면으로 안 바뀌면 페이지 위 노란 칸에 이유가 나옵니다(게임 쪽 페이지가 꺼져 있음 / 시작 실패 / 서버와 게임이 다른 PC). 설정 목록이 비어 있으면 이 버전으로 게임을 한 번 켜 주세요.
 
 - **제보 방법**
 
@@ -119,7 +120,8 @@
 - **Web page — view and change things in your browser while the game runs (F12 section 18 — on in every mode)**
 
 1. While the game runs, type **`http://127.0.0.1:6977/`** into your browser. The **"Open web page"** button in F12 section 05 opens it too.
-   It is also listed in the **SPT launcher's "mod pages"** as "RAM Cleaner (RamCleanerInterval)" (with the server part from the same zip installed, while the game runs on the same PC as the server).
+   It is also listed in the **SPT launcher's "mod pages"** as "RAM Cleaner (RamCleanerInterval)" (with the server part from the same zip installed, server and game on the same PC).
+   It opens even with the game closed: then it shows **the settings (used at the next game start) and the past session reports**, and switches to the live view by itself once the game is up.
 2. **Live** — cards for game memory, system free RAM, headroom to the crash limit, FPS, stutters, VRAM, SPT server, time left and restart advice, turning yellow/red when it gets risky. Memory and FPS charts for the last 10 minutes, stutter-cause and per-mod bars, and the manual cleanup buttons.
 3. **Session report** — the same as the section 16 report below, but including **the raid you are playing right now**.
 4. **Settings** — every F12 entry with its description; changes **apply in the game at once and are saved**. Search and "Reset" buttons. Korean/English switch at the top right.
@@ -175,7 +177,7 @@
 6. Using maschine-ModProfiler (F10) at the same time is still not recommended (big freeze when it first turns on).
 7. If the web page doesn't open, check the **"web page:"** line in the F12 status. "could not start" means another program uses port 6977 — change the port in section 18. Type **`127.0.0.1`**, not `localhost`.
 8. While the game is frozen for a moment (e.g. loading a raid) the page says "the game did not answer" and reconnects by itself.
-9. If RAM Cleaner is missing from the launcher's mod pages, check that `SPT_Runtime\user\mods\RamCleanerInterval.Server\` exists and restart the server. If it says "cannot reach" when opened from there, the game is closed or runs on a different PC than the server (FIKA etc.). Past session reports are still listed there, and it switches to the live page by itself once the game is up.
+9. If RAM Cleaner is missing from the launcher's mod pages, check that `SPT_Runtime\user\mods\RamCleanerInterval.Server\` exists and restart the server. If it does not switch to the live view after the game starts, the yellow box at the top says why (the game's page is off / failed to start / server and game on different PCs). If the settings list is empty, start the game once with this version.
 
 - **How to report**
 

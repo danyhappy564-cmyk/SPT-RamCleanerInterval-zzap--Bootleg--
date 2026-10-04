@@ -16,6 +16,10 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="offline.html" LogicalName="RamCleanerInterval.Server.offline.html" />
+  </ItemGroup>
+
   <!-- All of these ship with the SPT server: compile against them, never copy them. -->
   <ItemGroup>
     <PackageReference Include="SPTushonka.Common" Version="4.1.5" PrivateAssets="all" ExcludeAssets="runtime" />

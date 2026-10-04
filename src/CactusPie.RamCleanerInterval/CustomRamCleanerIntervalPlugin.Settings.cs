@@ -63,6 +63,7 @@ namespace CactusPie.RamCleanerInterval
 
         private ConfigEntry<string> _language;
         private ConfigEntry<string> _preset;
+        private ConfigEntry<string> _presetApplied;
 
         /// <summary>Every F12 entry with its Korean texts, so the language switch can rewrite what F12 shows.</summary>
         private readonly List<LocalizedEntry> _localized = new List<LocalizedEntry>();
@@ -186,7 +187,22 @@ namespace CactusPie.RamCleanerInterval
             MigrateSettings();
             ApplyLanguage();
             _language.SettingChanged += (_, __) => ApplyLanguage();
-            _preset.SettingChanged += (_, __) => ApplyPreset(_preset.Value);
+            _preset.SettingChanged += (_, __) =>
+            {
+                ApplyPreset(_preset.Value);
+                _presetApplied.Value = _preset.Value;
+            };
+
+            // The mode can also be changed in the .cfg while the game is closed (the SPT launcher's mod page does that):
+            // a value read from the file raises no SettingChanged, so apply it here once.
+            _presetApplied = Config.Bind(InternalSection, "Applied preset", _preset.Value,
+                new ConfigDescription("Do not edit.", null, new ConfigurationManagerAttributes { Browsable = false }));
+            if (_presetApplied.Value != _preset.Value)
+            {
+                Logger.LogInfo($"Mode changed outside the game ({_presetApplied.Value} -> {_preset.Value}): applying it");
+                ApplyPreset(_preset.Value);
+                _presetApplied.Value = _preset.Value;
+            }
         }
 
         private void BindModeSettings()
