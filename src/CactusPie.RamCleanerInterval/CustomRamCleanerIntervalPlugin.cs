@@ -180,6 +180,7 @@ namespace CactusPie.RamCleanerInterval
                                   (_profiler.Measuring ? ", mod profiler measuring" : string.Empty);
 
             BindSettings();
+            StartWebServer();
             StartCoroutine(EndOfFrameLoop());
 
             _sessionLog = new SessionLog(Logger);
@@ -202,6 +203,7 @@ namespace CactusPie.RamCleanerInterval
         internal void OnDestroy()
         {
             GarbageCollector.GCModeChanged -= OnGcModeChanged;
+            _web?.Stop();
             _combat.Unbind();
             _vram.Dispose();
             if (_sessionLog != null)
@@ -264,6 +266,7 @@ namespace CactusPie.RamCleanerInterval
             _snapshot = MemoryStats.Sample();
             SampleWorld();
             EvaluateServerAndForecast(now);
+            TickWeb(now);
             if (_inGame)
             {
                 _report.Sample(_snapshot, _vram.Dedicated, _dead);
@@ -982,6 +985,12 @@ namespace CactusPie.RamCleanerInterval
                 _sessionReport.SetHeavy(_heavy.TopMods(10), _heavy.TopBundles(15));
             }
 
+            List<string> suspects = CurrentSuspects();
+            _sessionReport.EndRaid(r => FillSessionRaid(r, suspects, _report.LastMinutes));
+        }
+
+        private List<string> CurrentSuspects()
+        {
             var suspects = new List<string>();
             if (_profiler.Suspect != null)
             {
@@ -994,24 +1003,27 @@ namespace CactusPie.RamCleanerInterval
             }
 
             suspects.AddRange(_memSuspects);
-            _sessionReport.EndRaid(r =>
-            {
-                r.Minutes = (float)_report.LastMinutes;
-                r.AvgFps = _frames.AverageFps;
-                r.LowFps = _frames.OnePercentLowFps();
-                r.Deaths = _report.Deaths;
-                r.PerDeathMb = _report.PerDeathMb;
-                r.PeakGameGb = _report.PeakPrivate / MemoryStats.BytesPerGb;
-                r.MinSystemFreeGb = _report.MinSystemAvailable >= 0 ? _report.MinSystemAvailable / MemoryStats.BytesPerGb : -1;
-                r.Hitches = _hitch.Count;
-                r.WorstHitchMs = _hitch.MaxMs;
-                r.Causes = _hitch.Causes();
-                r.ServerEndGb = _server.PrivateBytes > 0 ? _server.PrivateBytes / MemoryStats.BytesPerGb : -1;
-                r.Bots = _server.DescribeBots();
-                r.Waits = _server.DescribeWaits();
-                r.LowestRunwayMin = _forecast.LowestMinutes;
-                r.Suspects = suspects;
-            });
+            return suspects;
+        }
+
+        /// <summary>Copies this raid's numbers into the session report (at raid end, or live for the web page).</summary>
+        private void FillSessionRaid(SessionReport.Raid r, List<string> suspects, double minutes)
+        {
+            r.Minutes = (float)minutes;
+            r.AvgFps = _frames.AverageFps;
+            r.LowFps = _frames.OnePercentLowFps();
+            r.Deaths = _report.Deaths;
+            r.PerDeathMb = _report.PerDeathMb;
+            r.PeakGameGb = _report.PeakPrivate / MemoryStats.BytesPerGb;
+            r.MinSystemFreeGb = _report.MinSystemAvailable >= 0 ? _report.MinSystemAvailable / MemoryStats.BytesPerGb : -1;
+            r.Hitches = _hitch.Count;
+            r.WorstHitchMs = _hitch.MaxMs;
+            r.Causes = _hitch.Causes();
+            r.ServerEndGb = _server.PrivateBytes > 0 ? _server.PrivateBytes / MemoryStats.BytesPerGb : -1;
+            r.Bots = _server.DescribeBots();
+            r.Waits = _server.DescribeWaits();
+            r.LowestRunwayMin = _forecast.LowestMinutes;
+            r.Suspects = suspects;
         }
 
         private void OpenSessionReport()
@@ -1694,6 +1706,8 @@ namespace CactusPie.RamCleanerInterval
                 sb.Append(Loc.L("세션 보고서: ", "session report: ")).Append(_sessionReport.Written ? _sessionReport.FilePath : Loc.L("레이드 한 판이 끝나면 만들어짐", "written once a raid has finished")).Append('\n');
             }
 
+            sb.Append(Loc.L("웹 페이지: ", "web page: ")).Append(_web.Status).Append('\n');
+
             sb.Append(Loc.L("GC 상태: ", "GC: ")).Append(gcState)
               .Append(Loc.L(" · 나눠서 하는 GC(증분): ", " · incremental GC: ")).Append(GarbageCollector.isIncremental ? Loc.L("지원", "supported") : Loc.L("미지원", "not supported")).Append('\n');
 
@@ -2099,7 +2113,12 @@ namespace CactusPie.RamCleanerInterval
                 _diagMode.Value = !_diagMode.Value;
             }
 
-            if (GUILayout.Button(Loc.L("세션 보고서 열기 (브라우저)", "Open session report (browser)"), GUILayout.ExpandWidth(true)))
+            if (GUILayout.Button(Loc.L("웹 페이지 열기 (실시간·보고서·설정)", "Open web page (live · report · settings)"), GUILayout.ExpandWidth(true)))
+            {
+                OpenWebPage();
+            }
+
+            if (GUILayout.Button(Loc.L("세션 보고서 파일 열기", "Open session report file"), GUILayout.ExpandWidth(true)))
             {
                 OpenSessionReport();
             }

@@ -27,6 +27,7 @@ namespace CactusPie.RamCleanerInterval
         private const string ForecastSection = "15. Forecast";
         private const string SessionReportSection = "16. Session report";
         private const string HeavyItemsSection = "17. Experimental heavy items";
+        private const string WebSection = "18. Web page";
         private const string InternalSection = "Internal";
 
         // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
@@ -50,6 +51,7 @@ namespace CactusPie.RamCleanerInterval
         private const string ForecastCategory = "15. 메모리 예측 (남은 시간·재시작 권장)";
         private const string SessionReportCategory = "16. 세션 보고서 (그래프 페이지)";
         private const string HeavyItemsCategory = "17. [실험] 무거운 모드 아이템 찾기";
+        private const string WebCategory = "18. 웹 페이지 (브라우저로 보기·설정, 127.0.0.1)";
 
         // Mode / language. Values are stored in the .cfg, so they are fixed bilingual labels.
         private const string LanguageKorean = "한국어";
@@ -72,6 +74,7 @@ namespace CactusPie.RamCleanerInterval
             public string CategoryKo;
             public string NameKo;
             public string DescriptionKo;
+            public ConfigEntryBase Entry;
         }
 
         private ConfigEntry<bool> _gcEnabled;
@@ -153,6 +156,9 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<bool> _sessionReportEnabled;
         private ConfigEntry<bool> _heavyEnabled;
         private ConfigEntry<bool> _overlayHeavy;
+        private ConfigEntry<bool> _webEnabled;
+        private ConfigEntry<int> _webPort;
+        private ConfigEntry<bool> _webLan;
 
         private ConfigEntry<bool> _onlyInRaid;
         private ConfigEntry<bool> _showOverlay;
@@ -176,6 +182,7 @@ namespace CactusPie.RamCleanerInterval
             BindForecastSettings();
             BindSessionReportSettings();
             BindHeavyItemSettings();
+            BindWebSettings();
             MigrateSettings();
             ApplyLanguage();
             _language.SettingChanged += (_, __) => ApplyLanguage();
@@ -185,7 +192,7 @@ namespace CactusPie.RamCleanerInterval
         private void BindModeSettings()
         {
             _language = Bind(ModeSection, ModeCategory, "Language", "언어 (Language)", LanguageKorean,
-                "F12, 왼쪽 위 화면 표시, 세션 보고서의 언어입니다. F12는 창을 닫았다 다시 열면 바뀐 언어로 보입니다.",
+                "F12, 왼쪽 위 화면 표시, 세션 보고서, 웹 페이지의 언어입니다. F12는 창을 닫았다 다시 열면 바뀐 언어로 보입니다.",
                 new AcceptableValueList<string>(LanguageKorean, LanguageEnglish), 100);
 
             _preset = Bind(ModeSection, ModeCategory, "Preset", "모드", PresetCustom,
@@ -519,6 +526,24 @@ namespace CactusPie.RamCleanerInterval
                 null, 9);
         }
 
+        private void BindWebSettings()
+        {
+            _webEnabled = Bind(WebSection, WebCategory, "Enabled", "웹 페이지 켜기", true,
+                "게임이 켜져 있는 동안 브라우저에서 http://127.0.0.1:6977/ 을 열면 실시간 현황(메모리·FPS·서버·여유 예상 그래프), " +
+                "진행 중인 레이드까지 들어간 세션 보고서, 이 설정 전체(바꾸면 바로 적용)를 볼 수 있습니다. " +
+                "'05. 공통'의 '웹 페이지 열기' 버튼으로도 열립니다. 이 PC에서만 열리고, 아무도 안 보고 있을 때는 거의 일을 하지 않습니다.",
+                null, 10);
+
+            _webPort = Bind(WebSection, WebCategory, "Port", "포트 번호", 6977,
+                "주소의 끝 번호입니다(http://127.0.0.1:번호/). 다른 프로그램과 겹쳐서 '시작 실패'가 뜨면 다른 번호로 바꾸세요. 바꾸면 바로 다시 켜집니다.",
+                new AcceptableValueRange<int>(1024, 65535), 9);
+
+            _webLan = Bind(WebSection, WebCategory, "Allow LAN", "같은 네트워크의 다른 기기에서 접속 허용", false,
+                "켜면 휴대폰·다른 PC에서 이 PC의 IP 주소(예: http://192.168.0.10:6977/)로 열 수 있습니다. " +
+                "대신 같은 네트워크의 누구나 설정을 바꿀 수 있고, 처음 켤 때 윈도우 방화벽 허용 창이 뜰 수 있습니다. 집 네트워크에서만 켜세요.",
+                null, 8);
+        }
+
         private void BindLeakSettings()
         {
             _leakEnabled = Bind(LeakSection, LeakCategory, "Enabled", "누수 추적 켜기", false,
@@ -733,7 +758,9 @@ namespace CactusPie.RamCleanerInterval
                 attributes.HideDefaultButton = true;
             }
 
-            return Config.Bind(section, key, defaultValue, new ConfigDescription(description, range, attributes));
+            ConfigEntry<T> bound = Config.Bind(section, key, defaultValue, new ConfigDescription(description, range, attributes));
+            _localized[_localized.Count - 1].Entry = bound;
+            return bound;
         }
     }
 }

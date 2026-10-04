@@ -68,6 +68,11 @@
     </Reference>
   </ItemGroup>
 
+  <!-- Web page assets (18. Web page), read with GetManifestResourceStream("web.<file>"). -->
+  <ItemGroup>
+    <EmbeddedResource Include="Web\*.css;Web\*.js" LogicalName="web.%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <Target Name="ValidateSptRoot" BeforeTargets="ResolveReferences"
           Condition="'$(SptRoot)' == '' Or !Exists('$(SptRoot)\EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll')">
     <Error Text="Set SptRoot to a valid SPT installation using -p:SptRoot=&quot;C:\Path\To\SPT&quot;, the SPT_ROOT environment variable, or src\RamCleaner.local.props." />

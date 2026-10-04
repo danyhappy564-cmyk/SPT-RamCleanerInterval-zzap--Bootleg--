@@ -51,6 +51,7 @@ namespace CactusPie.RamCleanerInterval
             public string Restart;
             public List<string> Suspects = new List<string>();
             public readonly List<double[]> Points = new List<double[]>(); // minute, game GB, system free GB, server GB, fps
+            public bool InProgress;
         }
 
         public SessionReport(ManualLogSource log, string directory)
@@ -67,6 +68,24 @@ namespace CactusPie.RamCleanerInterval
         public bool Written { get; private set; }
 
         public int RaidCount => _raids.Count;
+
+        /// <summary>The raid being recorded right now (null between raids).</summary>
+        public Raid Current => _current;
+
+        /// <summary>
+        /// The same page for the web dashboard (main thread): includes the raid in progress (filled with live numbers by
+        /// <paramref name="fillCurrent"/>) and the dashboard's navigation bar.
+        /// </summary>
+        public string BuildLive(Action<Raid> fillCurrent, string nav)
+        {
+            if (_current != null)
+            {
+                fillCurrent(_current);
+                _current.InProgress = true;
+            }
+
+            return Build(_heavyMods, _heavyBundles, _current, nav);
+        }
 
         public void BeginRaid(string map, double serverGb)
         {
@@ -88,6 +107,7 @@ namespace CactusPie.RamCleanerInterval
             }
 
             fill(_current);
+            _current.InProgress = false;
             if (_current.Minutes >= 1f)
             {
                 _raids.Add(_current);
@@ -128,7 +148,7 @@ namespace CactusPie.RamCleanerInterval
             string html;
             try
             {
-                html = Build(_heavyMods, _heavyBundles);
+                html = Build(_heavyMods, _heavyBundles, null, null);
             }
             catch (Exception ex)
             {
@@ -179,37 +199,50 @@ namespace CactusPie.RamCleanerInterval
 
         // ---------------------------------------------------------------- HTML
 
-        private string Build(List<HeavyItemTracker.Stat> heavyMods, List<HeavyItemTracker.Stat> heavyBundles)
+        private string Build(List<HeavyItemTracker.Stat> heavyMods, List<HeavyItemTracker.Stat> heavyBundles, Raid live, string nav)
         {
+            var raids = new List<Raid>(_raids);
+            if (live != null)
+            {
+                raids.Add(live);
+            }
+
             var sb = new StringBuilder(64 * 1024);
             sb.Append("<!doctype html><html lang=\"" + Loc.L("ko", "en") + "\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
             string title = Loc.L("RAM 클리너 세션 보고서", "RAM Cleaner session report");
-            sb.Append($"<title>{title}</title><style>{Css}</style></head><body><main class=\"viz-root\">");
+            sb.Append($"<title>{title}</title><style>{Css}</style></head><body><main class=\"viz-root\">{nav}");
             sb.Append($"<h1>{title}</h1><p class=\"sub\">" +
-                      Loc.L($"세션 시작 {_sessionStart:yyyy-MM-dd HH:mm} · 레이드 {_raids.Count}판 · 마지막 갱신 {DateTime.Now:HH:mm:ss}",
-                            $"session started {_sessionStart:yyyy-MM-dd HH:mm} · {_raids.Count} raids · updated {DateTime.Now:HH:mm:ss}") + "</p>");
-
-            // --- session table
-            sb.Append("<section><h2>").Append(Loc.L("레이드별 요약", "Raids")).Append("</h2><div class=\"scroll\"><table><thead><tr>")
-              .Append(Loc.L("<th>#</th><th>시작</th><th>맵</th><th class=n>분</th><th class=n>평균 FPS</th><th class=n>1% 저점</th><th class=n>끊김</th>",
-                            "<th>#</th><th>start</th><th>map</th><th class=n>min</th><th class=n>avg FPS</th><th class=n>1% low</th><th class=n>stutters</th>"))
-              .Append(Loc.L("<th class=n>게임 최고(GB)</th><th class=n>시스템 최저 여유(GB)</th><th class=n>사망</th><th class=n>사망당(MB)</th>",
-                            "<th class=n>game peak (GB)</th><th class=n>lowest system free (GB)</th><th class=n>deaths</th><th class=n>per death (MB)</th>"))
-              .Append(Loc.L("<th class=n>서버(GB)</th><th>레이드 후 남은 메모리</th></tr></thead><tbody>",
-                            "<th class=n>server (GB)</th><th>memory kept after the raid</th></tr></thead><tbody>"));
-            for (int i = 0; i < _raids.Count; i++)
+                      Loc.L($"세션 시작 {_sessionStart:yyyy-MM-dd HH:mm} · 레이드 {_raids.Count}판" + (live != null ? " + 진행 중 1판" : string.Empty) + $" · 마지막 갱신 {DateTime.Now:HH:mm:ss}",
+                            $"session started {_sessionStart:yyyy-MM-dd HH:mm} · {_raids.Count} raids" + (live != null ? " + 1 in progress" : string.Empty) + $" · updated {DateTime.Now:HH:mm:ss}") + "</p>");
+            if (raids.Count == 0)
             {
-                Raid r = _raids[i];
-                sb.Append("<tr>")
-                  .Append($"<td><a href=\"#raid{i + 1}\">{i + 1}</a></td><td>{r.Start:HH:mm}</td><td>{E(r.Map)}</td>")
-                  .Append($"<td class=n>{F(r.Minutes, "0")}</td><td class=n>{F(r.AvgFps, "0")}</td><td class=n>{F(r.LowFps, "0")}</td>")
-                  .Append($"<td class=n>{r.Hitches}</td><td class=n>{F(r.PeakGameGb, "0.0")}</td><td class=n>{(r.MinSystemFreeGb >= 0 ? F(r.MinSystemFreeGb, "0.0") : "-")}</td>")
-                  .Append($"<td class=n>{r.Deaths}</td><td class=n>{(r.PerDeathMb >= 0 ? F(r.PerDeathMb, "0") : "-")}</td>")
-                  .Append($"<td class=n>{(r.ServerStartGb >= 0 && r.ServerEndGb >= 0 ? $"{F(r.ServerStartGb, "0.0")} → {F(r.ServerEndGb, "0.0")}" : "-")}</td>")
-                  .Append($"<td>{E(r.Kept ?? "-")}</td></tr>");
+                sb.Append("<section class=\"card\"><p>").Append(Loc.L("아직 기록된 레이드가 없습니다. 레이드를 시작하면 여기에 진행 중인 레이드가 나오고, 끝나면 요약이 쌓입니다.",
+                    "No raids recorded yet. Once a raid starts it shows up here while it runs, and its summary stays after it ends.")).Append("</p></section>");
             }
+            else
+            {
+                // --- session table
+                sb.Append("<section><h2>").Append(Loc.L("레이드별 요약", "Raids")).Append("</h2><div class=\"scroll\"><table><thead><tr>")
+                  .Append(Loc.L("<th>#</th><th>시작</th><th>맵</th><th class=n>분</th><th class=n>평균 FPS</th><th class=n>1% 저점</th><th class=n>끊김</th>",
+                                "<th>#</th><th>start</th><th>map</th><th class=n>min</th><th class=n>avg FPS</th><th class=n>1% low</th><th class=n>stutters</th>"))
+                  .Append(Loc.L("<th class=n>게임 최고(GB)</th><th class=n>시스템 최저 여유(GB)</th><th class=n>사망</th><th class=n>사망당(MB)</th>",
+                                "<th class=n>game peak (GB)</th><th class=n>lowest system free (GB)</th><th class=n>deaths</th><th class=n>per death (MB)</th>"))
+                  .Append(Loc.L("<th class=n>서버(GB)</th><th>레이드 후 남은 메모리</th></tr></thead><tbody>",
+                                "<th class=n>server (GB)</th><th>memory kept after the raid</th></tr></thead><tbody>"));
+                for (int i = 0; i < raids.Count; i++)
+                {
+                    Raid r = raids[i];
+                    sb.Append("<tr>")
+                      .Append($"<td><a href=\"#raid{i + 1}\">{i + 1}</a>{(r.InProgress ? Loc.L(" (진행 중)", " (in progress)") : string.Empty)}</td><td>{r.Start:HH:mm}</td><td>{E(r.Map)}</td>")
+                      .Append($"<td class=n>{F(r.Minutes, "0")}</td><td class=n>{F(r.AvgFps, "0")}</td><td class=n>{F(r.LowFps, "0")}</td>")
+                      .Append($"<td class=n>{r.Hitches}</td><td class=n>{F(r.PeakGameGb, "0.0")}</td><td class=n>{(r.MinSystemFreeGb >= 0 ? F(r.MinSystemFreeGb, "0.0") : "-")}</td>")
+                      .Append($"<td class=n>{r.Deaths}</td><td class=n>{(r.PerDeathMb >= 0 ? F(r.PerDeathMb, "0") : "-")}</td>")
+                      .Append($"<td class=n>{(r.ServerStartGb >= 0 && r.ServerEndGb >= 0 ? $"{F(r.ServerStartGb, "0.0")} → {F(r.ServerEndGb, "0.0")}" : "-")}</td>")
+                      .Append($"<td>{E(r.Kept ?? "-")}</td></tr>");
+                }
 
-            sb.Append("</tbody></table></div></section>");
+                sb.Append("</tbody></table></div></section>");
+            }
 
             if (_raids.Count >= 2)
             {
@@ -222,11 +255,12 @@ namespace CactusPie.RamCleanerInterval
             }
 
             // --- per raid
-            for (int i = 0; i < _raids.Count; i++)
+            for (int i = 0; i < raids.Count; i++)
             {
-                Raid r = _raids[i];
+                Raid r = raids[i];
                 sb.Append($"<section id=\"raid{i + 1}\" class=\"card\"><h2>" +
-                          Loc.L($"{i + 1}판 — {E(r.Map)} · {r.Start:HH:mm} · {F(r.Minutes, "0")}분", $"Raid {i + 1} — {E(r.Map)} · {r.Start:HH:mm} · {F(r.Minutes, "0")} min") + "</h2>");
+                          Loc.L($"{i + 1}판 — {E(r.Map)} · {r.Start:HH:mm} · {F(r.Minutes, "0")}분", $"Raid {i + 1} — {E(r.Map)} · {r.Start:HH:mm} · {F(r.Minutes, "0")} min") +
+                          (r.InProgress ? " <span class=\"live\">" + Loc.L("진행 중", "in progress") + "</span>" : string.Empty) + "</h2>");
                 sb.Append("<div class=\"tiles\">")
                   .Append(Tile(Loc.L("평균 FPS", "Average FPS"), F(r.AvgFps, "0"), Loc.L("1% 저점 ", "1% low ") + F(r.LowFps, "0")))
                   .Append(Tile(Loc.L("끊김", "Stutters"), r.Hitches.ToString(Inv),
@@ -405,14 +439,14 @@ namespace CactusPie.RamCleanerInterval
         }
 
         // Palette: reference data-viz palette, categorical slots 1-3 (validated all-pairs in both modes).
-        private const string Css = @"
+        internal const string Css = @"
 .viz-root{color-scheme:light;--page:#f9f9f7;--surface-1:#fcfcfb;--text-primary:#0b0b0b;--text-secondary:#52514e;--muted:#898781;
 --grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--series-3:#1baf7a}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])) .viz-root{color-scheme:dark;--page:#0d0d0d;--surface-1:#1a1a19;
 --text-primary:#fff;--text-secondary:#c3c2b7;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;--series-3:#199e70}}
 :root[data-theme=dark] .viz-root{color-scheme:dark;--page:#0d0d0d;--surface-1:#1a1a19;--text-primary:#fff;--text-secondary:#c3c2b7;--grid:#2c2c2a;
 --axis:#383835;--border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;--series-3:#199e70}
-html,body{margin:0}body{background:#f9f9f7}@media (prefers-color-scheme:dark){body{background:#0d0d0d}}
+html,body{margin:0}html:lang(ko) .viz-root{word-break:keep-all}body{background:#f9f9f7}@media (prefers-color-scheme:dark){body{background:#0d0d0d}}
 .viz-root{background:var(--page);color:var(--text-primary);font:14px/1.5 system-ui,-apple-system,'Segoe UI','Malgun Gothic',sans-serif;
 max-width:1180px;margin:0 auto;padding:24px 16px 48px;min-height:100vh;box-sizing:border-box}
 h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:0 0 12px}h3{font-size:14px;margin:16px 0 8px;color:var(--text-secondary)}
@@ -435,20 +469,23 @@ td.n,th.n{text-align:right}a{color:var(--series-1)}
 #tip{position:fixed;pointer-events:none;display:none;background:var(--surface-1);color:var(--text-primary);border:1px solid var(--border);
 border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.18);z-index:10;font-variant-numeric:tabular-nums}
 #tip i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px}
+.nav{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 20px}.nav .brand{font-weight:600;margin-right:8px}
+.nav a{padding:6px 12px;border-radius:8px;border:1px solid var(--border);color:var(--text-secondary);text-decoration:none}
+.nav a.on{background:var(--series-1);border-color:transparent;color:#fff}
+.live{font-size:12px;font-weight:600;color:#fff;background:var(--series-2);border-radius:6px;padding:2px 8px;vertical-align:2px}
 @media (max-width:560px){.bar{grid-template-columns:1fr auto}.track{grid-column:1/-1;order:3}}";
 
-        private const string Js = @"
+        internal const string Js = @"
 (function(){var tip=document.getElementById('tip');var NS='http://www.w3.org/2000/svg';
 function el(n,a){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);return e}
 function nice(m){if(!(m>0))return 1;var p=Math.pow(10,Math.floor(Math.log10(m)));var f=m/p;return (f<=1?1:f<=2?2:f<=5?5:10)*p}
 function fmt(v){return v==null?'-':(Math.abs(v)>=100?v.toFixed(0):v.toFixed(1))}
-document.querySelectorAll('.plot[data-chart]').forEach(function(box){var d=JSON.parse(box.getAttribute('data-chart'));
-var W=640,H=230,L=44,R=12,T=10,B=26,x=d.x,n=x.length;var max=0;d.series.forEach(function(s){s.v.forEach(function(v){if(v!=null&&v>max)max=v})});
+function draw(box,d){box.innerHTML='';var W=640,H=230,L=44,R=12,T=10,B=26,x=d.x,n=x.length;var max=0;d.series.forEach(function(s){s.v.forEach(function(v){if(v!=null&&v>max)max=v})});
 var top=nice(max*1.08);var x0=x[0],x1=x[n-1];if(x1==x0)x1=x0+1;
 function sx(v){return L+(v-x0)/(x1-x0)*(W-L-R)}function sy(v){return T+(1-v/top)*(H-T-B)}
 if(d.series.length>1){var lg=document.createElement('div');lg.className='legend';d.series.forEach(function(s){var sp=document.createElement('span');
 sp.innerHTML='<i style=""background:var(--series-'+s.slot+')""></i>';sp.appendChild(document.createTextNode(s.name));lg.appendChild(sp)});box.appendChild(lg)}
-var svg=el('svg',{viewBox:'0 0 '+W+' '+H,role:'img','aria-label':box.parentNode.querySelector('figcaption').textContent});
+var svg=el('svg',{viewBox:'0 0 '+W+' '+H,role:'img','aria-label':(box.parentNode.querySelector('figcaption')||{}).textContent||''});
 for(var i=0;i<=4;i++){var v=top*i/4,y=sy(v);svg.appendChild(el('line',{x1:L,x2:W-R,y1:y,y2:y,stroke:i?'var(--grid)':'var(--axis)','stroke-width':1}));
 var t=el('text',{x:L-6,y:y+4,'text-anchor':'end','font-size':11,fill:'var(--muted)'});t.textContent=fmt(v);svg.appendChild(t)}
 var ticks=Math.min(6,n);for(var j=0;j<ticks;j++){var xv=x0+(x1-x0)*j/Math.max(1,ticks-1);var tx=el('text',{x:sx(xv),y:H-6,'text-anchor':'middle','font-size':11,fill:'var(--muted)'});
@@ -465,6 +502,7 @@ cross.setAttribute('visibility','visible');var h='<b>'+d.pre+(d.raid?Math.round(
 d.series.forEach(function(s){h+='<div><i style=""background:var(--series-'+s.slot+')""></i>'+s.name.replace(/</g,'&lt;')+' '+fmt(s.v[best])+' '+d.unit+'</div>'});
 tip.innerHTML=h;tip.style.display='block';var tx=ev.clientX+14,ty=ev.clientY+14;if(tx+tip.offsetWidth>innerWidth-8)tx=ev.clientX-tip.offsetWidth-14;
 if(ty+tip.offsetHeight>innerHeight-8)ty=ev.clientY-tip.offsetHeight-14;tip.style.left=tx+'px';tip.style.top=ty+'px'}
-hit.addEventListener('mousemove',show);hit.addEventListener('mouseleave',function(){tip.style.display='none';cross.setAttribute('visibility','hidden')})})})();";
+hit.addEventListener('mousemove',show);hit.addEventListener('mouseleave',function(){tip.style.display='none';cross.setAttribute('visibility','hidden')})}
+window.rcChart=draw;document.querySelectorAll('.plot[data-chart]').forEach(function(box){draw(box,JSON.parse(box.getAttribute('data-chart')))})})();";
     }
 }

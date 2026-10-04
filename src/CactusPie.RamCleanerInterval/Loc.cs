@@ -34,13 +34,14 @@ namespace CactusPie.RamCleanerInterval
             ["15. 메모리 예측 (남은 시간·재시작 권장)"] = "15. Memory forecast (time left · restart advice)",
             ["16. 세션 보고서 (그래프 페이지)"] = "16. Session report (chart page)",
             ["17. [실험] 무거운 모드 아이템 찾기"] = "17. [Experimental] Find heavy mod items",
+            ["18. 웹 페이지 (브라우저로 보기·설정, 127.0.0.1)"] = "18. Web page (view · settings in a browser, 127.0.0.1)",
         };
 
         /// <summary>English (name, description) per "section|key". Missing entries fall back to Korean.</summary>
         public static readonly Dictionary<string, string[]> Settings = new Dictionary<string, string[]>
         {
             // 00. Mode · language
-            ["0. Mode|Language"] = new[] { "Language", "Language of F12, the top-left overlay and the session report. F12 shows the new language after you close and reopen it." },
+            ["0. Mode|Language"] = new[] { "Language", "Language of F12, the top-left overlay, the session report and the web page. F12 shows the new language after you close and reopen it." },
             ["0. Mode|Preset"] = new[] { "Mode",
                 "Picking a mode sets the switches below in one go (you can still change any of them afterwards):\n" +
                 "• Auto cleanup — memory cleanup only, no overlay, almost nothing in the log. For normal play and raids; lowest cost.\n" +
@@ -159,6 +160,11 @@ namespace CactusPie.RamCleanerInterval
             // 17. Heavy items
             ["17. Experimental heavy items|Enabled"] = new[] { "[Experimental] Enable heavy mod item finder", "When bots spawn in raid, measures how much memory the game's gear bundles (models, textures) add when loaded for the first time and ranks which mod's which item costs the most (mods told apart by SPT's bundle list). A guide for what to remove from APBS etc. when 'memory per death' is high.\nWhy experimental: loading is asynchronous and mixes with other work, so single numbers are inexact. Trust only what stays large across raids. Turning it on installs a probe in the main menu (measuring itself costs almost nothing)." },
             ["17. Experimental heavy items|Show in overlay"] = new[] { "Show in the overlay", "When on, adds per-mod bars to the top-left overlay." },
+
+            // 18. Web page
+            ["18. Web page|Enabled"] = new[] { "Enable the web page", "While the game runs, open http://127.0.0.1:6977/ in a browser for the live view (memory · FPS · server · time-left charts), the session report including the raid in progress, and all of these settings (changes apply at once). The 'open web page' button in section 05 opens it too. Only this PC can open it, and it does almost nothing while nobody is looking." },
+            ["18. Web page|Port"] = new[] { "Port number", "The number at the end of the address (http://127.0.0.1:number/). If it says 'could not start' because another program uses it, pick another number. Changing it restarts the page right away." },
+            ["18. Web page|Allow LAN"] = new[] { "Allow other devices on the network", "When on, a phone or another PC can open it with this PC's IP address (e.g. http://192.168.0.10:6977/). Anyone on the same network can then change the settings, and Windows Firewall may ask for permission the first time. Only turn it on at home." },
         };
     }
 }
