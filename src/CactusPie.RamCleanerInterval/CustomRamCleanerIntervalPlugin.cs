@@ -1706,7 +1706,13 @@ namespace CactusPie.RamCleanerInterval
                 sb.Append(Loc.L("세션 보고서: ", "session report: ")).Append(_sessionReport.Written ? _sessionReport.FilePath : Loc.L("레이드 한 판이 끝나면 만들어짐", "written once a raid has finished")).Append('\n');
             }
 
-            sb.Append(Loc.L("웹 페이지: ", "web page: ")).Append(_web.Status).Append('\n');
+            sb.Append(Loc.L("웹 페이지: ", "web page: ")).Append(_web.Status);
+            if (_launcherPageUrl != null)
+            {
+                sb.Append(Loc.L(" · 런처 모드 페이지: ", " · launcher mod page: ")).Append(_launcherPageUrl);
+            }
+
+            sb.Append('\n');
 
             sb.Append(Loc.L("GC 상태: ", "GC: ")).Append(gcState)
               .Append(Loc.L(" · 나눠서 하는 GC(증분): ", " · incremental GC: ")).Append(GarbageCollector.isIncremental ? Loc.L("지원", "supported") : Loc.L("미지원", "not supported")).Append('\n');

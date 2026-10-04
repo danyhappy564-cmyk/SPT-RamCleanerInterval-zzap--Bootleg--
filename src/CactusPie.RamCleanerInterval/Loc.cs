@@ -163,7 +163,7 @@ namespace CactusPie.RamCleanerInterval
 
             // 18. Web page
             ["18. Web page|Enabled"] = new[] { "Enable the web page", "While the game runs, open http://127.0.0.1:6977/ in a browser for the live view (memory · FPS · server · time-left charts), the session report including the raid in progress, and all of these settings (changes apply at once). The 'open web page' button in section 05 opens it too. Only this PC can open it, and it does almost nothing while nobody is looking.\nWith the server part from the zip (SPT_Runtime\\user\\mods\\RamCleanerInterval.Server) it is also listed as 'RAM Cleaner' in the SPT launcher's mod pages (server and game on the same PC)." },
-            ["18. Web page|Port"] = new[] { "Port number", "The number at the end of the address (http://127.0.0.1:number/). If it says 'could not start' because another program uses it, pick another number. Changing it restarts the page right away." },
+            ["18. Web page|Port"] = new[] { "Port number", "The number at the end of the address (http://127.0.0.1:number/). If it says 'could not start' because another program uses it, pick another number. Changing it restarts the page right away.\n6969 is the SPT server's own port and can't be used. The 6969 address in the launcher's mod pages (/ramcleaner/) is the server part showing this page from inside the server, so leave this as it is." },
             ["18. Web page|Allow LAN"] = new[] { "Allow other devices on the network", "When on, a phone or another PC can open it with this PC's IP address (e.g. http://192.168.0.10:6977/). Anyone on the same network can then change the settings, and Windows Firewall may ask for permission the first time. Only turn it on at home." },
         };
     }

@@ -58,11 +58,20 @@ namespace CactusPie.RamCleanerInterval
         /// <summary>True when a browser asked for something in the last <paramref name="seconds"/> seconds.</summary>
         public bool UsedWithin(int seconds) => unchecked(Environment.TickCount - _lastRequestTick) < seconds * 1000 && _lastRequestTick != int.MinValue;
 
-        public void Start(int port, bool lan)
+        /// <param name="serverPort">The SPT server's own port (6969): never taken here — it would collide with the server.</param>
+        public void Start(int port, bool lan, int serverPort)
         {
             Stop();
             lock (_gate)
             {
+                if (port == serverPort)
+                {
+                    Status = Loc.L($"시작 안 함 — {port}번은 SPT 서버가 쓰는 포트입니다. 다른 번호(기본 6977)로 바꾸세요. 런처 '모드 페이지'의 6969 주소는 서버 부품이 서버 안에서 열어 줍니다.",
+                                   $"not started — port {port} belongs to the SPT server. Pick another number (default 6977). The 6969 address in the launcher's mod pages is served by the server part, inside the server.");
+                    _log.LogWarning($"[web] port {port} is the SPT server's port - not starting the page");
+                    return;
+                }
+
                 var listener = new HttpListener();
                 try
                 {

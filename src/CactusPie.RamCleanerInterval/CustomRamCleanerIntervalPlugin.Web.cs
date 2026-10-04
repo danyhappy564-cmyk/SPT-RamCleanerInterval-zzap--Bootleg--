@@ -21,6 +21,7 @@ namespace CactusPie.RamCleanerInterval
         private const int MainThreadTimeoutMs = 5000;
 
         private WebServer _web;
+        private string _launcherPageUrl;
         private readonly List<float[]> _webHistory = new List<float[]>(); // time, game commit GB, system free GB, server GB (-1), fps
         private float _webNextSample;
         private float _webRestartAt = -1f;
@@ -30,13 +31,14 @@ namespace CactusPie.RamCleanerInterval
         private void StartWebServer()
         {
             _web = new WebServer(Logger, HandleWeb);
+            _launcherPageUrl = LauncherPageUrl;
             EventHandler restart = (_, __) => _webRestartAt = Time.realtimeSinceStartup + 0.5f; // after the reply has gone out
             _webEnabled.SettingChanged += restart;
             _webPort.SettingChanged += restart;
             _webLan.SettingChanged += restart;
             if (_webEnabled.Value)
             {
-                _web.Start(_webPort.Value, _webLan.Value);
+                _web.Start(_webPort.Value, _webLan.Value, SptServerPort);
             }
         }
 
@@ -50,7 +52,7 @@ namespace CactusPie.RamCleanerInterval
                 _web.Stop();
                 if (_webEnabled.Value)
                 {
-                    _web.Start(_webPort.Value, _webLan.Value);
+                    _web.Start(_webPort.Value, _webLan.Value, SptServerPort);
                 }
             }
 
@@ -71,6 +73,39 @@ namespace CactusPie.RamCleanerInterval
             if (_webHistory.Count > WebHistoryPoints)
             {
                 _webHistory.RemoveAt(0);
+            }
+        }
+
+        /// <summary>The SPT server address from the game's <c>-config={"BackendUrl":...}</c> launch argument (null if absent).</summary>
+        private static readonly string s_backendUrl = FindBackendUrl();
+
+        private static string FindBackendUrl()
+        {
+            foreach (string arg in Environment.GetCommandLineArgs())
+            {
+                if (arg.StartsWith("-config=", StringComparison.OrdinalIgnoreCase))
+                {
+                    System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(arg, "\"BackendUrl\"\\s*:\\s*\"([^\"]+)\"");
+                    if (match.Success)
+                    {
+                        return match.Groups[1].Value.TrimEnd('/');
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>The SPT server's port (6969 unless the launch argument says otherwise); the page never uses it.</summary>
+        private static int SptServerPort => Uri.TryCreate(s_backendUrl, UriKind.Absolute, out Uri uri) ? uri.Port : 6969;
+
+        /// <summary>The launcher mod page address when the optional server part is installed, else null.</summary>
+        private static string LauncherPageUrl
+        {
+            get
+            {
+                string dll = Path.Combine(BepInEx.Paths.GameRootPath, "SPT_Runtime", "user", "mods", "RamCleanerInterval.Server", "RamCleanerInterval.Server.dll");
+                return File.Exists(dll) ? (s_backendUrl ?? "https://127.0.0.1:6969") + "/ramcleaner/" : null;
             }
         }
 

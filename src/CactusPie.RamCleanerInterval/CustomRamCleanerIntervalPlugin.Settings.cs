@@ -537,7 +537,8 @@ namespace CactusPie.RamCleanerInterval
                 null, 10);
 
             _webPort = Bind(WebSection, WebCategory, "Port", "포트 번호", 6977,
-                "주소의 끝 번호입니다(http://127.0.0.1:번호/). 다른 프로그램과 겹쳐서 '시작 실패'가 뜨면 다른 번호로 바꾸세요. 바꾸면 바로 다시 켜집니다.",
+                "주소의 끝 번호입니다(http://127.0.0.1:번호/). 다른 프로그램과 겹쳐서 '시작 실패'가 뜨면 다른 번호로 바꾸세요. 바꾸면 바로 다시 켜집니다.\n" +
+                "6969는 SPT 서버가 쓰는 번호라 쓸 수 없습니다. 런처 '모드 페이지'에서 6969 주소(/ramcleaner/)로 열리는 것은 서버 부품이 서버 안에서 이 페이지를 대신 보여 주는 것이니, 이 값은 그대로 두면 됩니다.",
                 new AcceptableValueRange<int>(1024, 65535), 9);
 
             _webLan = Bind(WebSection, WebCategory, "Allow LAN", "같은 네트워크의 다른 기기에서 접속 허용", false,
