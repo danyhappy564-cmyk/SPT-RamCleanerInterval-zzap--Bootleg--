@@ -82,15 +82,28 @@ namespace CactusPie.RamCleanerInterval
 
         private static string FindBackendUrl()
         {
+            // spt-common has already parsed the launch argument (the same value every SPT request uses).
+            try
+            {
+                string host = Type.GetType("SPT.Common.Http.RequestHandler, spt-common")?
+                    .GetField("Host", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null) as string;
+                if (!string.IsNullOrEmpty(host))
+                {
+                    return host.TrimEnd('/');
+                }
+            }
+            catch (Exception)
+            {
+                // read the argument ourselves
+            }
+
+            // Quotes may be stripped by Windows argument parsing: {BackendUrl:https://127.0.0.1:6969,...}.
             foreach (string arg in Environment.GetCommandLineArgs())
             {
-                if (arg.StartsWith("-config=", StringComparison.OrdinalIgnoreCase))
+                System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(arg, "BackendUrl[\"']?\\s*:\\s*[\"']?([^\"',}\\s]+)");
+                if (match.Success)
                 {
-                    System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(arg, "\"BackendUrl\"\\s*:\\s*\"([^\"]+)\"");
-                    if (match.Success)
-                    {
-                        return match.Groups[1].Value.TrimEnd('/');
-                    }
+                    return match.Groups[1].Value.TrimEnd('/');
                 }
             }
 

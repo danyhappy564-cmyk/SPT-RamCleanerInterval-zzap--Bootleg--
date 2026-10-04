@@ -18,6 +18,9 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 변경 이력
 
+- 2026-10-05 (KST) — **v2.12.0 실게임 확인 + 서버 주소 찾기 보강**
+  - 사용자 로그(2026-10-05)로 확인: 게임 안 웹 페이지 기동, 런처 모드 페이지(게임 꺼짐·켜짐), 웹에서 모드·언어 변경과 CompoundingPerf 언어 동기화, 서버 상태·봇 생성 시간, 모드별 부하, 무거운 아이템 측정 장치 설치(번들 5101개 인식)
+  - 같은 로그에서 CompoundingPerf F12가 서버 주소를 못 찾는 문제 발견(`no -config BackendUrl launch argument`) → 두 모드 모두 SPT가 이미 읽어 둔 주소(`spt-common`의 `RequestHandler.Host`)를 먼저 쓰고, 실행 인자는 따옴표가 빠진 형태까지 읽도록 보강
 - 2026-10-04 21:25 (KST) — **v2.12.0 추가: SPT 런처 '모드 페이지' 목록에 등록 (서버 부품, 선택 설치)**
   - zip에 작은 **서버 부품** `SPT_Runtime\user\mods\RamCleanerInterval.Server\` 추가. 깔면 SPT 런처(와 SPT 웹 패널)의 **모드 페이지** 목록에
     **'RAM Cleaner (RamCleanerInterval)'** 가 뜨고, 누르면 `/ramcleaner/` 에서 게임 안 웹 페이지(실시간·보고서·설정·서버 최적화)를 그대로 보여 줍니다

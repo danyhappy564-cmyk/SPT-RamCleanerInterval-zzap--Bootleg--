@@ -73,8 +73,8 @@
 
 - **알려진 문제 / 주의**
 
-1. 이번에 추가된 기능들은 아직 긴 테스트 레이드를 거치지 않았습니다. 표시가 이상하거나 끊김이 늘면 '자동 정리' 모드로 바꾸거나 해당 번호(14~18)를 꺼 주세요.
-2. 17번(실험)과 18번(웹 페이지)은 실제 게임에서 처음 돌아가는 기능입니다. 문제가 생기면 꺼 두고 알려 주세요. 웹 페이지를 꺼도 다른 기능에는 영향이 없습니다.
+1. 실제 게임에서 확인한 것(2026-10-05 로그): 웹 페이지(게임 안 6977 / 런처 모드 페이지 6969, 게임 꺼짐·켜짐 모두), 웹에서 모드·언어 바꾸기(CompoundingPerf 언어도 같이 바뀜), SPT 서버 상태·봇 생성 응답 시간, 모드별 부하·메모리 의심, [실험] 무거운 아이템의 측정 장치 설치. 아직 긴 레이드 여러 판은 거치지 않았으니 표시가 이상하거나 끊김이 늘면 '자동 정리' 모드로 바꾸거나 해당 번호(14~18)를 꺼 주세요.
+2. 17번(실험)의 순위는 여러 판을 돌려야 의미가 생깁니다. 웹 페이지를 꺼도 다른 기능에는 영향이 없습니다.
 3. 집중 분석에서 다른 모드로 바꾸면 모드별 부하 분석의 측정 장치는 게임을 다시 켜야 완전히 빠집니다(그 전까지는 측정만 멈춤).
 4. 언어를 레이드 도중에 바꾸면 그 판의 끊김 원인 목록에 두 언어가 섞여 보일 수 있습니다(다음 판부터 정상).
 5. 'SPT 서버' 칸이 계속 "프로세스 찾는 중"이면 서버 프로그램 이름이 달라서 못 찾는 경우입니다. 로그를 보내 주세요.
@@ -169,8 +169,8 @@
 
 - **Known issues / notes**
 
-1. The new features have not been through long test raids yet. If something looks wrong or stutters increase, switch to "Auto cleanup" or turn off that section (14–18).
-2. Sections 17 (experimental) and 18 (web page) run in the real game for the first time with this release. If one causes trouble, switch it off and let me know. Turning the web page off doesn't affect anything else.
+1. Confirmed in the real game (2026-10-05 log): the web page (in-game 6977 / launcher mod page 6969, with the game closed and running), changing mode and language from the web (CompoundingPerf's language follows), SPT server status and bot generation times, per-mod cost and memory suspects, and the experimental heavy item probe installing. Not yet through many long raids — if something looks wrong or stutters increase, switch to "Auto cleanup" or turn off that section (14–18).
+2. Section 17's (experimental) ranking only means something after several raids. Turning the web page off doesn't affect anything else.
 3. Leaving Deep analysis, the per-mod cost probe is fully removed only after a game restart (until then it just stops measuring).
 4. Switching language in the middle of a raid can mix both languages in that raid's stutter cause list (fine from the next raid).
 5. If the "SPT server" block keeps saying "looking for the process", the server program has a different name. Please send the log.
