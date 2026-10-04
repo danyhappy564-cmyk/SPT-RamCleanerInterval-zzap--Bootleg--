@@ -81,7 +81,9 @@ namespace CactusPie.RamCleanerInterval
 
         public string Suspect { get; private set; }
 
-        public string LastSummary { get; private set; } = "아직 측정 안 함";
+        private string _lastSummary;
+
+        public string LastSummary { get => _lastSummary ?? Loc.L("아직 측정 안 함", "not measured yet"); private set => _lastSummary = value; }
 
         /// <summary>Last window: managed memory each mod's code allocated, MB per minute, highest first.</summary>
         public List<KeyValuePair<string, float>> LastAlloc { get; private set; } = new List<KeyValuePair<string, float>>();
@@ -505,7 +507,8 @@ namespace CactusPie.RamCleanerInterval
             Suspect = null;
             if (result.Count > 0 && result[0].Value >= suspectMs && result[0].Value >= LastFrameMs * suspectShare)
             {
-                Suspect = $"{result[0].Key} — 프레임의 {result[0].Value / LastFrameMs * 100f:0}% ({result[0].Value:0.0}ms)";
+                Suspect = Loc.L($"{result[0].Key} — 프레임의 {result[0].Value / LastFrameMs * 100f:0}% ({result[0].Value:0.0}ms)",
+                                $"{result[0].Key} — {result[0].Value / LastFrameMs * 100f:0}% of the frame ({result[0].Value:0.0} ms)");
             }
 
             bool baselineReady = Time.realtimeSinceStartup - _raidResetTime >= BaselineAfterSeconds;
@@ -523,7 +526,8 @@ namespace CactusPie.RamCleanerInterval
                     float before = Math.Max(_firstWindowMs[i], MinBaselineMs);
                     if (perMod[i] >= 1f && perMod[i] >= before * 2f && perMod[i] - before >= 1f)
                     {
-                        string grow = $"{ModRegistry.Name(i)} — 레이드 3분 시점 {before:0.0}ms → 지금 {perMod[i]:0.0}ms (점점 느려짐)";
+                        string grow = Loc.L($"{ModRegistry.Name(i)} — 레이드 3분 시점 {before:0.0}ms → 지금 {perMod[i]:0.0}ms (점점 느려짐)",
+                                            $"{ModRegistry.Name(i)} — {before:0.0} ms at 3 min into the raid → {perMod[i]:0.0} ms now (getting slower)");
                         Suspect = Suspect == null ? grow : Suspect + " / " + grow;
                         break;
                     }
@@ -551,7 +555,8 @@ namespace CactusPie.RamCleanerInterval
             AllocSuspect = null;
             if (alloc.Count > 0 && alloc[0].Value >= allocSuspectMbPerMin && alloc[0].Value >= allocTotal * 0.4f)
             {
-                AllocSuspect = $"{alloc[0].Key} — 모드 코드가 만드는 메모리의 {alloc[0].Value / Math.Max(0.01f, allocTotal) * 100f:0}% ({alloc[0].Value:0}MB/분)";
+                AllocSuspect = Loc.L($"{alloc[0].Key} — 모드 코드가 만드는 메모리의 {alloc[0].Value / Math.Max(0.01f, allocTotal) * 100f:0}% ({alloc[0].Value:0}MB/분)",
+                                     $"{alloc[0].Key} — {alloc[0].Value / Math.Max(0.01f, allocTotal) * 100f:0}% of the memory mod code creates ({alloc[0].Value:0} MB/min)");
             }
 
             if (_firstWindowAlloc == null)
@@ -568,7 +573,8 @@ namespace CactusPie.RamCleanerInterval
                     float before = Math.Max(_firstWindowAlloc[i], MinBaselineAllocMb);
                     if (perModAlloc[i] >= allocSuspectMbPerMin / 2f && perModAlloc[i] >= before * 2f && perModAlloc[i] - before >= allocSuspectMbPerMin / 2f)
                     {
-                        string grow = $"{ModRegistry.Name(i)} — 메모리 생성 레이드 3분 시점 {before:0}MB/분 → 지금 {perModAlloc[i]:0}MB/분 (점점 늘어남)";
+                        string grow = Loc.L($"{ModRegistry.Name(i)} — 메모리 생성 레이드 3분 시점 {before:0}MB/분 → 지금 {perModAlloc[i]:0}MB/분 (점점 늘어남)",
+                                            $"{ModRegistry.Name(i)} — memory creation {before:0} MB/min at 3 min into the raid → {perModAlloc[i]:0} MB/min now (growing)");
                         AllocSuspect = AllocSuspect == null ? grow : AllocSuspect + " / " + grow;
                         break;
                     }
@@ -582,8 +588,10 @@ namespace CactusPie.RamCleanerInterval
                          (Suspect != null ? $" | SUSPECT: {Suspect}" : string.Empty) +
                          $" | managed allocations MB/min ({AllocMethod}, total {allocTotal:0}): {(topAlloc.Length > 0 ? topAlloc : "(none)")}" +
                          (AllocSuspect != null ? $" | MEMORY SUSPECT: {AllocSuspect}" : string.Empty));
-            LastSummary = $"{DateTime.Now:HH:mm:ss} 측정 — " + (Suspect != null ? "의심: " + Suspect : "뚜렷한 의심 모드 없음") +
-                          (result.Count > 0 ? $" (1위 {result[0].Key} {result[0].Value:0.0}ms / 프레임 {LastFrameMs:0.0}ms)" : string.Empty);
+            LastSummary = $"{DateTime.Now:HH:mm:ss} " + Loc.L("측정 — ", "measured — ") +
+                          (Suspect != null ? Loc.L("의심: ", "suspect: ") + Suspect : Loc.L("뚜렷한 의심 모드 없음", "no clear suspect")) +
+                          (result.Count > 0 ? Loc.L($" (1위 {result[0].Key} {result[0].Value:0.0}ms / 프레임 {LastFrameMs:0.0}ms)",
+                                                    $" (top {result[0].Key} {result[0].Value:0.0} ms / frame {LastFrameMs:0.0} ms)") : string.Empty);
         }
     }
 }

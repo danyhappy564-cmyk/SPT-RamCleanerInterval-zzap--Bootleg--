@@ -182,15 +182,21 @@ namespace CactusPie.RamCleanerInterval
         private string Build(List<HeavyItemTracker.Stat> heavyMods, List<HeavyItemTracker.Stat> heavyBundles)
         {
             var sb = new StringBuilder(64 * 1024);
-            sb.Append("<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
-            sb.Append($"<title>RAM 클리너 세션 보고서</title><style>{Css}</style></head><body><main class=\"viz-root\">");
-            sb.Append($"<h1>RAM 클리너 세션 보고서</h1><p class=\"sub\">세션 시작 {_sessionStart:yyyy-MM-dd HH:mm} · 레이드 {_raids.Count}판 · 마지막 갱신 {DateTime.Now:HH:mm:ss}</p>");
+            sb.Append("<!doctype html><html lang=\"" + Loc.L("ko", "en") + "\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
+            string title = Loc.L("RAM 클리너 세션 보고서", "RAM Cleaner session report");
+            sb.Append($"<title>{title}</title><style>{Css}</style></head><body><main class=\"viz-root\">");
+            sb.Append($"<h1>{title}</h1><p class=\"sub\">" +
+                      Loc.L($"세션 시작 {_sessionStart:yyyy-MM-dd HH:mm} · 레이드 {_raids.Count}판 · 마지막 갱신 {DateTime.Now:HH:mm:ss}",
+                            $"session started {_sessionStart:yyyy-MM-dd HH:mm} · {_raids.Count} raids · updated {DateTime.Now:HH:mm:ss}") + "</p>");
 
             // --- session table
-            sb.Append("<section><h2>레이드별 요약</h2><div class=\"scroll\"><table><thead><tr>")
-              .Append("<th>#</th><th>시작</th><th>맵</th><th class=n>분</th><th class=n>평균 FPS</th><th class=n>1% 저점</th><th class=n>끊김</th>")
-              .Append("<th class=n>게임 최고(GB)</th><th class=n>시스템 최저 여유(GB)</th><th class=n>사망</th><th class=n>사망당(MB)</th>")
-              .Append("<th class=n>서버(GB)</th><th>레이드 후 남은 메모리</th></tr></thead><tbody>");
+            sb.Append("<section><h2>").Append(Loc.L("레이드별 요약", "Raids")).Append("</h2><div class=\"scroll\"><table><thead><tr>")
+              .Append(Loc.L("<th>#</th><th>시작</th><th>맵</th><th class=n>분</th><th class=n>평균 FPS</th><th class=n>1% 저점</th><th class=n>끊김</th>",
+                            "<th>#</th><th>start</th><th>map</th><th class=n>min</th><th class=n>avg FPS</th><th class=n>1% low</th><th class=n>stutters</th>"))
+              .Append(Loc.L("<th class=n>게임 최고(GB)</th><th class=n>시스템 최저 여유(GB)</th><th class=n>사망</th><th class=n>사망당(MB)</th>",
+                            "<th class=n>game peak (GB)</th><th class=n>lowest system free (GB)</th><th class=n>deaths</th><th class=n>per death (MB)</th>"))
+              .Append(Loc.L("<th class=n>서버(GB)</th><th>레이드 후 남은 메모리</th></tr></thead><tbody>",
+                            "<th class=n>server (GB)</th><th>memory kept after the raid</th></tr></thead><tbody>"));
             for (int i = 0; i < _raids.Count; i++)
             {
                 Raid r = _raids[i];
@@ -207,11 +213,11 @@ namespace CactusPie.RamCleanerInterval
 
             if (_raids.Count >= 2)
             {
-                sb.Append("<section><h2>판별 비교</h2><div class=\"grid2\">");
-                AppendChart(sb, "cmp-fps", "평균 FPS (판별)", "fps", _raids.Select((r, i) => (double)(i + 1)).ToList(), "판",
-                    new[] { Series("평균 FPS", 1, _raids.Select(r => (double)r.AvgFps)), Series("1% 저점", 2, _raids.Select(r => (double)r.LowFps)) });
-                AppendChart(sb, "cmp-mem", "게임 최고 메모리 (GB, 판별)", "GB", _raids.Select((r, i) => (double)(i + 1)).ToList(), "판",
-                    new[] { Series("게임 최고 메모리", 1, _raids.Select(r => r.PeakGameGb)) });
+                sb.Append("<section><h2>").Append(Loc.L("판별 비교", "Raid by raid")).Append("</h2><div class=\"grid2\">");
+                AppendChart(sb, "cmp-fps", Loc.L("평균 FPS (판별)", "Average FPS per raid"), "fps", _raids.Select((r, i) => (double)(i + 1)).ToList(), true,
+                    new[] { Series(Loc.L("평균 FPS", "avg FPS"), 1, _raids.Select(r => (double)r.AvgFps)), Series(Loc.L("1% 저점", "1% low"), 2, _raids.Select(r => (double)r.LowFps)) });
+                AppendChart(sb, "cmp-mem", Loc.L("게임 최고 메모리 (GB, 판별)", "Game peak memory per raid (GB)"), "GB", _raids.Select((r, i) => (double)(i + 1)).ToList(), true,
+                    new[] { Series(Loc.L("게임 최고 메모리", "game peak memory"), 1, _raids.Select(r => r.PeakGameGb)) });
                 sb.Append("</div></section>");
             }
 
@@ -219,12 +225,17 @@ namespace CactusPie.RamCleanerInterval
             for (int i = 0; i < _raids.Count; i++)
             {
                 Raid r = _raids[i];
-                sb.Append($"<section id=\"raid{i + 1}\" class=\"card\"><h2>{i + 1}판 — {E(r.Map)} · {r.Start:HH:mm} · {F(r.Minutes, "0")}분</h2>");
+                sb.Append($"<section id=\"raid{i + 1}\" class=\"card\"><h2>" +
+                          Loc.L($"{i + 1}판 — {E(r.Map)} · {r.Start:HH:mm} · {F(r.Minutes, "0")}분", $"Raid {i + 1} — {E(r.Map)} · {r.Start:HH:mm} · {F(r.Minutes, "0")} min") + "</h2>");
                 sb.Append("<div class=\"tiles\">")
-                  .Append(Tile("평균 FPS", F(r.AvgFps, "0"), $"1% 저점 {F(r.LowFps, "0")}"))
-                  .Append(Tile("끊김", r.Hitches.ToString(Inv), r.Hitches > 0 ? $"최대 {F(r.WorstHitchMs, "0")}ms" : "없음"))
-                  .Append(Tile("게임 최고 메모리", F(r.PeakGameGb, "0.0") + " GB", r.PerDeathMb >= 0 ? $"사망당 {F(r.PerDeathMb, "0")}MB" : "사망당 -"))
-                  .Append(Tile("가장 짧았던 여유 예상", double.IsNaN(r.LowestRunwayMin) ? "-" : r.LowestRunwayMin >= 600 ? "10시간+" : F(r.LowestRunwayMin, "0") + "분", "메모리 한도까지"))
+                  .Append(Tile(Loc.L("평균 FPS", "Average FPS"), F(r.AvgFps, "0"), Loc.L("1% 저점 ", "1% low ") + F(r.LowFps, "0")))
+                  .Append(Tile(Loc.L("끊김", "Stutters"), r.Hitches.ToString(Inv),
+                      r.Hitches > 0 ? Loc.L("최대 ", "worst ") + F(r.WorstHitchMs, "0") + " ms" : Loc.L("없음", "none")))
+                  .Append(Tile(Loc.L("게임 최고 메모리", "Game peak memory"), F(r.PeakGameGb, "0.0") + " GB",
+                      Loc.L("사망당 ", "per death ") + (r.PerDeathMb >= 0 ? F(r.PerDeathMb, "0") + " MB" : "-")))
+                  .Append(Tile(Loc.L("가장 짧았던 여유 예상", "Shortest time left"),
+                      double.IsNaN(r.LowestRunwayMin) ? "-" : r.LowestRunwayMin >= 600 ? Loc.L("10시간+", "10 h+") : F(r.LowestRunwayMin, "0") + Loc.L("분", " min"),
+                      Loc.L("메모리 한도까지", "until the memory limit")))
                   .Append("</div>");
 
                 if (r.Points.Count >= 2)
@@ -232,27 +243,27 @@ namespace CactusPie.RamCleanerInterval
                     List<double> x = r.Points.Select(p => p[0]).ToList();
                     var memory = new List<string>
                     {
-                        Series("게임 커밋", 1, r.Points.Select(p => p[1])),
-                        Series("시스템 여유 RAM", 2, r.Points.Select(p => p[2])),
+                        Series(Loc.L("게임 커밋", "game commit"), 1, r.Points.Select(p => p[1])),
+                        Series(Loc.L("시스템 여유 RAM", "system free RAM"), 2, r.Points.Select(p => p[2])),
                     };
                     if (r.Points.Any(p => p[3] > 0))
                     {
-                        memory.Add(Series("SPT 서버", 3, r.Points.Select(p => p[3] > 0 ? p[3] : double.NaN)));
+                        memory.Add(Series(Loc.L("SPT 서버", "SPT server"), 3, r.Points.Select(p => p[3] > 0 ? p[3] : double.NaN)));
                     }
 
                     sb.Append("<div class=\"grid2\">");
-                    AppendChart(sb, $"mem{i}", "메모리 (GB)", "GB", x, "분", memory.ToArray());
-                    AppendChart(sb, $"fps{i}", "FPS (10초 평균)", "fps", x, "분", new[] { Series("FPS", 1, r.Points.Select(p => p[4])) });
+                    AppendChart(sb, $"mem{i}", Loc.L("메모리 (GB)", "Memory (GB)"), "GB", x, false, memory.ToArray());
+                    AppendChart(sb, $"fps{i}", Loc.L("FPS (10초 평균)", "FPS (10 s average)"), "fps", x, false, new[] { Series("FPS", 1, r.Points.Select(p => p[4])) });
                     sb.Append("</div>");
                 }
 
                 if (r.Causes.Count > 0)
                 {
                     int most = Math.Max(1, r.Causes.Max(c => c.Value.Key));
-                    sb.Append("<h3>끊김 원인</h3><div class=\"bars\">");
+                    sb.Append("<h3>").Append(Loc.L("끊김 원인", "Stutter causes")).Append("</h3><div class=\"bars\">");
                     foreach (KeyValuePair<string, KeyValuePair<int, float>> c in r.Causes.Take(8))
                     {
-                        sb.Append(Bar(c.Key, c.Value.Key / (double)most, $"{c.Value.Key}회 · 최대 {F(c.Value.Value, "0")}ms"));
+                        sb.Append(Bar(c.Key, c.Value.Key / (double)most, Loc.L($"{c.Value.Key}회 · 최대 {F(c.Value.Value, "0")}ms", $"{c.Value.Key}x · worst {F(c.Value.Value, "0")} ms")));
                     }
 
                     sb.Append("</div>");
@@ -272,17 +283,17 @@ namespace CactusPie.RamCleanerInterval
                 notes.AddRange(r.Suspects);
                 if (r.Kept != null)
                 {
-                    notes.Add("레이드 후 남은 메모리: " + r.Kept);
+                    notes.Add(Loc.L("레이드 후 남은 메모리: ", "memory kept after the raid: ") + r.Kept);
                 }
 
                 if (r.Restart != null)
                 {
-                    notes.Add("재시작 판단: " + r.Restart);
+                    notes.Add(Loc.L("재시작 판단: ", "restart advice: ") + r.Restart);
                 }
 
                 if (notes.Count > 0)
                 {
-                    sb.Append("<h3>메모</h3><ul>");
+                    sb.Append("<h3>").Append(Loc.L("메모", "Notes")).Append("</h3><ul>");
                     foreach (string note in notes)
                     {
                         sb.Append("<li>").Append(E(note)).Append("</li>");
@@ -298,17 +309,22 @@ namespace CactusPie.RamCleanerInterval
             if (heavyMods != null && heavyMods.Count > 0)
             {
                 double most = Math.Max(1, heavyMods.Max(m => m.Mb));
-                sb.Append("<section class=\"card\"><h2>[실험] 처음 로드 때 메모리를 많이 쓴 모드</h2>")
-                  .Append("<p class=\"sub\">봇 장비 번들을 처음 불러올 때 늘어난 메모리를 나눠 붙인 값입니다. 동시에 다른 일이 일어나면 섞이므로, 여러 판에서 반복해서 큰 것만 믿으세요.</p><div class=\"bars\">");
+                sb.Append("<section class=\"card\"><h2>").Append(Loc.L("[실험] 처음 로드 때 메모리를 많이 쓴 모드", "[Experimental] Mods whose items cost the most memory on first load")).Append("</h2>")
+                  .Append("<p class=\"sub\">").Append(Loc.L(
+                      "봇 장비 번들을 처음 불러올 때 늘어난 메모리를 나눠 붙인 값입니다. 동시에 다른 일이 일어나면 섞이므로, 여러 판에서 반복해서 큰 것만 믿으세요.",
+                      "Memory added while bot gear bundles were loaded for the first time, split over those bundles. Other work at the same moment gets mixed in, so trust only what stays large across raids."))
+                  .Append("</p><div class=\"bars\">");
                 foreach (HeavyItemTracker.Stat m in heavyMods)
                 {
-                    sb.Append(Bar(m.Mod, m.Mb / most, $"{F(m.Mb, "0")}MB · 번들 {m.Count}개" + (m.Overlapped > 0 ? $" (겹침 {m.Overlapped})" : string.Empty)));
+                    sb.Append(Bar(m.Mod, m.Mb / most, Loc.L($"{F(m.Mb, "0")}MB · 번들 {m.Count}개", $"{F(m.Mb, "0")} MB · {m.Count} bundles") +
+                        (m.Overlapped > 0 ? Loc.L($" (겹침 {m.Overlapped})", $" ({m.Overlapped} overlapped)") : string.Empty)));
                 }
 
                 sb.Append("</div>");
                 if (heavyBundles != null && heavyBundles.Count > 0)
                 {
-                    sb.Append("<h3>번들별 (1회 로드당)</h3><div class=\"scroll\"><table><thead><tr><th>번들</th><th>모드</th><th class=n>MB/회</th><th class=n>로드</th></tr></thead><tbody>");
+                    sb.Append(Loc.L("<h3>번들별 (1회 로드당)</h3><div class=\"scroll\"><table><thead><tr><th>번들</th><th>모드</th><th class=n>MB/회</th><th class=n>로드</th></tr></thead><tbody>",
+                                    "<h3>Per bundle (per load)</h3><div class=\"scroll\"><table><thead><tr><th>bundle</th><th>mod</th><th class=n>MB/load</th><th class=n>loads</th></tr></thead><tbody>"));
                     foreach (HeavyItemTracker.Stat b in heavyBundles)
                     {
                         sb.Append($"<tr><td>{E(b.Name)}</td><td>{E(b.Mod)}</td><td class=n>{F(b.Mb / Math.Max(1, b.Count), "0")}</td><td class=n>{b.Count}</td></tr>");
@@ -320,7 +336,8 @@ namespace CactusPie.RamCleanerInterval
                 sb.Append("</section>");
             }
 
-            sb.Append("<p class=\"sub\">자세한 기록: BepInEx\\RamCleaner\\ 의 전용 로그, BepInEx\\LogOutput.log 의 RAM 클리너 줄</p>");
+            sb.Append("<p class=\"sub\">").Append(Loc.L("자세한 기록: BepInEx\\RamCleaner\\ 의 전용 로그, BepInEx\\LogOutput.log 의 RAM 클리너 줄",
+                "Details: the dedicated log in BepInEx\\RamCleaner\\ and the RAM cleaner lines in BepInEx\\LogOutput.log")).Append("</p>");
             sb.Append("<div id=\"tip\" role=\"tooltip\"></div></main><script>").Append(Js).Append("</script></body></html>");
             return sb.ToString();
         }
@@ -331,10 +348,14 @@ namespace CactusPie.RamCleanerInterval
                    string.Join(",", values.Select(v => double.IsNaN(v) || double.IsInfinity(v) ? "null" : v.ToString("0.###", Inv))) + "]}";
         }
 
-        private static void AppendChart(StringBuilder sb, string id, string title, string unit, List<double> x, string xUnit, string[] series)
+        /// <param name="perRaid">x is a raid number (ticks "3판" / "raid 3") rather than minutes into the raid.</param>
+        private static void AppendChart(StringBuilder sb, string id, string title, string unit, List<double> x, bool perRaid, string[] series)
         {
+            string pre = perRaid ? Loc.L("", "raid ") : string.Empty;
+            string suf = perRaid ? Loc.L("판", "") : Loc.L("분", " min");
             sb.Append($"<figure class=\"chart\"><figcaption>{E(title)}</figcaption><div class=\"plot\" id=\"{id}\" data-chart='")
-              .Append("{\"unit\":\"").Append(JsonEscape(unit)).Append("\",\"xunit\":\"").Append(JsonEscape(xUnit)).Append("\",\"x\":[")
+              .Append("{\"unit\":\"").Append(JsonEscape(unit)).Append("\",\"raid\":").Append(perRaid ? "true" : "false")
+              .Append(",\"pre\":\"").Append(JsonEscape(pre)).Append("\",\"suf\":\"").Append(JsonEscape(suf)).Append("\",\"x\":[")
               .Append(string.Join(",", x.Select(v => v.ToString("0.##", Inv)))).Append("],\"series\":[")
               .Append(string.Join(",", series)).Append("]}'></div></figure>");
         }
@@ -431,7 +452,7 @@ var svg=el('svg',{viewBox:'0 0 '+W+' '+H,role:'img','aria-label':box.parentNode.
 for(var i=0;i<=4;i++){var v=top*i/4,y=sy(v);svg.appendChild(el('line',{x1:L,x2:W-R,y1:y,y2:y,stroke:i?'var(--grid)':'var(--axis)','stroke-width':1}));
 var t=el('text',{x:L-6,y:y+4,'text-anchor':'end','font-size':11,fill:'var(--muted)'});t.textContent=fmt(v);svg.appendChild(t)}
 var ticks=Math.min(6,n);for(var j=0;j<ticks;j++){var xv=x0+(x1-x0)*j/Math.max(1,ticks-1);var tx=el('text',{x:sx(xv),y:H-6,'text-anchor':'middle','font-size':11,fill:'var(--muted)'});
-tx.textContent=(d.xunit=='판'?Math.round(xv):xv.toFixed(0))+d.xunit;svg.appendChild(tx)}
+tx.textContent=d.pre+(d.raid?Math.round(xv):xv.toFixed(0))+d.suf;svg.appendChild(tx)}
 d.series.forEach(function(s){var p='',pen=false;for(var i=0;i<n;i++){var v=s.v[i];if(v==null){pen=false;continue}
 p+=(pen?'L':'M')+sx(x[i]).toFixed(1)+' '+sy(v).toFixed(1);pen=true}
 svg.appendChild(el('path',{d:p,fill:'none',stroke:'var(--series-'+s.slot+')','stroke-width':2,'stroke-linejoin':'round','stroke-linecap':'round'}));
@@ -440,7 +461,7 @@ var cross=el('line',{y1:T,y2:H-B,stroke:'var(--axis)','stroke-width':1,visibilit
 var hit=el('rect',{x:L,y:0,width:W-L-R,height:H,fill:'transparent'});svg.appendChild(hit);box.appendChild(svg);
 function show(ev){var r=svg.getBoundingClientRect();var px=(ev.clientX-r.left)/r.width*W;var best=0,bd=1e9;
 for(var i=0;i<n;i++){var dd=Math.abs(sx(x[i])-px);if(dd<bd){bd=dd;best=i}}cross.setAttribute('x1',sx(x[best]));cross.setAttribute('x2',sx(x[best]));
-cross.setAttribute('visibility','visible');var h='<b>'+(d.xunit=='판'?Math.round(x[best])+'판':x[best].toFixed(1)+'분')+'</b>';
+cross.setAttribute('visibility','visible');var h='<b>'+d.pre+(d.raid?Math.round(x[best]):x[best].toFixed(1))+d.suf+'</b>';
 d.series.forEach(function(s){h+='<div><i style=""background:var(--series-'+s.slot+')""></i>'+s.name.replace(/</g,'&lt;')+' '+fmt(s.v[best])+' '+d.unit+'</div>'});
 tip.innerHTML=h;tip.style.display='block';var tx=ev.clientX+14,ty=ev.clientY+14;if(tx+tip.offsetWidth>innerWidth-8)tx=ev.clientX-tip.offsetWidth-14;
 if(ty+tip.offsetHeight>innerHeight-8)ty=ev.clientY-tip.offsetHeight-14;tip.style.left=tx+'px';tip.style.top=ty+'px'}

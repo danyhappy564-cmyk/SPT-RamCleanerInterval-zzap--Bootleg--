@@ -14,7 +14,7 @@ using UnityEngine.Scripting;
 
 namespace CactusPie.RamCleanerInterval
 {
-    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.11.0")]
+    [BepInPlugin("com.cactuspie.ramcleanerinterval", "RAM 클리너 (RamCleanerInterval)", "2.12.0")]
     public partial class CustomRamCleanerIntervalPlugin : BaseUnityPlugin
     {
         private const float TrimMaxDeferSeconds = 60f;
@@ -48,7 +48,7 @@ namespace CactusPie.RamCleanerInterval
         private int _leakFrame = -1;
         private double _leakMs;
         private int _assetActiveFrame = -1;
-        private string _lastReport = "아직 없음";
+        private string _lastReport;
 
         private ModCostProfiler _profiler;
         private ModObjectCounter _objects;
@@ -101,7 +101,7 @@ namespace CactusPie.RamCleanerInterval
         // Managed / native memory when the raid started loading, to show what is still held after the raid.
         private long _monoBeforeRaid = -1;
         private long _nativeBeforeRaid = -1;
-        private string _keptAfterRaid = "아직 없음";
+        private string _keptAfterRaid;
         private float _leakNext = -1f;
         private float _leakPendingSince = -1f;
 
@@ -150,9 +150,11 @@ namespace CactusPie.RamCleanerInterval
         private int _weakUnloads;
         private bool _autoUnloadStopped;
 
-        private string _lastTrimResult = "아직 없음";
-        private string _lastAssetResult = "아직 없음";
-        private string _statusText = "측정 중...";
+        private string _lastTrimResult;
+        private string _lastAssetResult;
+
+        private static string NoneYet => Loc.L("아직 없음", "none yet");
+        private string _statusText = Loc.L("측정 중...", "measuring...");
 
         internal void Awake()
         {
@@ -231,7 +233,7 @@ namespace CactusPie.RamCleanerInterval
             {
                 if (!_gcEnabled.Value && _gc.IsAuto)
                 {
-                    _gc.Abort(_inGame, "설정에서 꺼서 중단");
+                    _gc.Abort(_inGame, Loc.L("설정에서 꺼서 중단", "stopped: turned off in settings"));
                 }
                 else
                 {
@@ -339,14 +341,16 @@ namespace CactusPie.RamCleanerInterval
             }
 
             long kept = _gc.LastUsedAfter - _monoBeforeRaid;
-            _keptAfterRaid = $"{DateTime.Now:HH:mm} 관리 메모리 레이드 전보다 {(kept >= 0 ? "+" : "")}{MemoryStats.Gb(kept)}GB";
+            string sign = kept >= 0 ? "+" : string.Empty;
+            _keptAfterRaid = Loc.L($"{DateTime.Now:HH:mm} 관리 메모리 레이드 전보다 {sign}{MemoryStats.Gb(kept)}GB",
+                                   $"{DateTime.Now:HH:mm} managed memory {sign}{MemoryStats.Gb(kept)} GB vs before the raid");
             Logger.LogInfo($"[after raid] managed heap after GC {MemoryStats.Gb(_gc.LastUsedAfter)} GB vs {MemoryStats.Gb(_monoBeforeRaid)} GB " +
                            $"before the raid ({(kept >= 0 ? "+" : "")}{MemoryStats.Gb(kept)} GB kept)");
             if (kept >= (long)(_keptAfterRaidSuspectMb.Value * 1024L * 1024L))
             {
-                string warning = $"레이드가 끝났는데도 관리 메모리 {MemoryStats.Gb(kept)}GB가 안 풀림 — 어떤 모드가 지난 레이드 데이터를 붙잡고 있음. " +
-                                 "레이드를 반복할수록 쌓이니 긴 세션이면 가끔 게임 재시작을 권장";
-                _keptAfterRaid += " (의심)";
+                string warning = Loc.L($"레이드가 끝났는데도 관리 메모리 {MemoryStats.Gb(kept)}GB가 안 풀림 — 어떤 모드가 지난 레이드 데이터를 붙잡고 있음. ", $"{MemoryStats.Gb(kept)} GB of managed memory still not freed after the raid — some mod is holding on to the last raid's data. ") +
+                                 Loc.L("레이드를 반복할수록 쌓이니 긴 세션이면 가끔 게임 재시작을 권장", "It piles up raid after raid, so restart the game now and then in long sessions");
+                _keptAfterRaid += Loc.L(" (의심)", " (suspect)");
                 Logger.LogWarning($"[mem suspect] {warning}");
                 if (_memSuspectNotify.Value)
                 {
@@ -414,10 +418,10 @@ namespace CactusPie.RamCleanerInterval
                 {
                     // Raid is being torn down; the game unloads assets itself on the way to the menu.
                     _assetPhase = AssetPhase.Idle;
-                    _lastAssetResult = $"{DateTime.Now:HH:mm:ss} 레이드가 끝나서 취소";
+                    _lastAssetResult = Loc.L($"{DateTime.Now:HH:mm:ss} 레이드가 끝나서 취소", $"{DateTime.Now:HH:mm:ss} cancelled: raid ended");
                 }
 
-                _gc.Abort(false, "레이드가 끝나서 중단");
+                _gc.Abort(false, Loc.L("레이드가 끝나서 중단", "stopped: raid ended"));
                 _combat.Unbind();
                 Logger.LogInfo("Left raid");
                 if (_postRaidCleanup.Value)
@@ -675,7 +679,7 @@ namespace CactusPie.RamCleanerInterval
             if (gcFirst && (_gc.Running || _gc.Start($"before asset unload ({reason})", false, false)))
             {
                 _assetPhase = AssetPhase.WaitingForGc;
-                _lastAssetResult = $"{DateTime.Now:HH:mm:ss} GC 먼저 진행 중...";
+                _lastAssetResult = Loc.L($"{DateTime.Now:HH:mm:ss} GC 먼저 진행 중...", $"{DateTime.Now:HH:mm:ss} running GC first...");
                 return;
             }
 
@@ -685,7 +689,7 @@ namespace CactusPie.RamCleanerInterval
         private void BeginUnload()
         {
             _assetPhase = AssetPhase.Unloading;
-            _lastAssetResult = $"{DateTime.Now:HH:mm:ss} 에셋 내리는 중...";
+            _lastAssetResult = Loc.L($"{DateTime.Now:HH:mm:ss} 에셋 내리는 중...", $"{DateTime.Now:HH:mm:ss} unloading assets...");
             Logger.LogInfo($"UnloadUnusedAssets start ({_assetReason})");
             _assetOperation = Resources.UnloadUnusedAssets();
             _assetActiveFrame = Time.frameCount;
@@ -747,9 +751,10 @@ namespace CactusPie.RamCleanerInterval
             }
 
             string vramText = vramAfter >= 0 ? $", VRAM {MemoryStats.Gb(_assetVramBefore)} → {MemoryStats.Gb(vramAfter)} GB" : string.Empty;
-            _lastAssetResult = $"{DateTime.Now:HH:mm:ss} ({(_assetAuto ? "자동" : _assetReason == "raid start" ? "레이드 시작" : "수동")}) " +
-                               $"네이티브 {MemoryStats.Gb(_assetBefore.Native)} → {MemoryStats.Gb(after.Native)} GB{vramText}, " +
-                               $"가장 긴 프레임 {_assetLongestFrame * 1000f:0}ms";
+            string kind = _assetAuto ? Loc.L("자동", "auto") : _assetReason == "raid start" ? Loc.L("레이드 시작", "raid start") : Loc.L("수동", "manual");
+            _lastAssetResult = $"{DateTime.Now:HH:mm:ss} ({kind}) " +
+                               Loc.L($"네이티브 {MemoryStats.Gb(_assetBefore.Native)} → {MemoryStats.Gb(after.Native)} GB{vramText}, ", $"native {MemoryStats.Gb(_assetBefore.Native)} → {MemoryStats.Gb(after.Native)} GB{vramText}, ") +
+                               Loc.L($"가장 긴 프레임 {_assetLongestFrame * 1000f:0}ms", $"longest frame {_assetLongestFrame * 1000f:0} ms");
 
             Logger.LogInfo($"UnloadUnusedAssets done ({_assetReason}) in {unloadSeconds:0.0}s: native {MemoryStats.Gb(_assetBefore.Native)} -> " +
                            $"{MemoryStats.Gb(after.Native)} GB (freed {MemoryStats.Gb(nativeFreed)}), VRAM {MemoryStats.Gb(_assetVramBefore)} -> " +
@@ -833,7 +838,7 @@ namespace CactusPie.RamCleanerInterval
             }
 
             _lastTrim = Time.realtimeSinceStartup;
-            _lastTrimResult = $"{DateTime.Now:HH:mm:ss} 진행 중... ({reason})";
+            _lastTrimResult = Loc.L($"{DateTime.Now:HH:mm:ss} 진행 중... ({reason})", $"{DateTime.Now:HH:mm:ss} running... ({reason})");
 
             ThreadPool.QueueUserWorkItem(_ =>
             {
@@ -855,8 +860,8 @@ namespace CactusPie.RamCleanerInterval
                                        $"game working set {MemoryStats.Gb(now.WorkingSet)} GB, private {MemoryStats.Gb(now.PrivateBytes)} GB");
                     }
                     _lastTrimResult = ok
-                        ? $"{DateTime.Now:HH:mm:ss} 워킹셋 {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB ({reason})"
-                        : $"{DateTime.Now:HH:mm:ss} 실패 (윈도우 API 호출 불가)";
+                        ? Loc.L($"{DateTime.Now:HH:mm:ss} 워킹셋 {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB ({reason})", $"{DateTime.Now:HH:mm:ss} working set {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB ({reason})")
+                        : Loc.L($"{DateTime.Now:HH:mm:ss} 실패 (윈도우 API 호출 불가)", $"{DateTime.Now:HH:mm:ss} failed (Windows API not available)");
                     Logger.LogInfo($"Working set trim ({reason}): ok={ok}, {MemoryStats.Gb(before)} -> {MemoryStats.Gb(after)} GB, " +
                                    $"background call {watch.Elapsed.TotalMilliseconds:0}ms");
                 });
@@ -905,7 +910,7 @@ namespace CactusPie.RamCleanerInterval
                         if (_forecastNotify.Value)
                         {
                             _report.AddWarning();
-                            Notify($"메모리 여유 부족 예상 — {line}. 이번 레이드를 마무리하는 걸 권장합니다.", true);
+                            Notify(Loc.L($"메모리 여유 부족 예상 — {line}. 이번 레이드를 마무리하는 걸 권장합니다.", $"Memory running low — {line}. Consider wrapping up this raid."), true);
                         }
                     }
                 }
@@ -950,7 +955,7 @@ namespace CactusPie.RamCleanerInterval
                 Logger.LogInfo($"[restart] {restart}");
                 if (notify != null && _restartNotify.Value)
                 {
-                    Notify("RAM 클리너: " + notify, true);
+                    Notify(Loc.L("RAM 클리너: ", "RAM Cleaner: ") + notify, true);
                 }
             }
 
@@ -980,12 +985,12 @@ namespace CactusPie.RamCleanerInterval
             var suspects = new List<string>();
             if (_profiler.Suspect != null)
             {
-                suspects.Add("프레임 의심: " + _profiler.Suspect);
+                suspects.Add(Loc.L("프레임 의심: ", "frame suspect: ") + _profiler.Suspect);
             }
 
             if (_hitch.Suspect != null)
             {
-                suspects.Add("끊김 의심: " + _hitch.Suspect);
+                suspects.Add(Loc.L("끊김 의심: ", "stutter suspect: ") + _hitch.Suspect);
             }
 
             suspects.AddRange(_memSuspects);
@@ -1013,7 +1018,7 @@ namespace CactusPie.RamCleanerInterval
         {
             if (!_sessionReport.Written || !System.IO.File.Exists(_sessionReport.FilePath))
             {
-                Notify("세션 보고서는 레이드가 한 판 끝나면 만들어집니다.", false);
+                Notify(Loc.L("세션 보고서는 레이드가 한 판 끝나면 만들어집니다.", "The session report is written once a raid has finished."), false);
                 return;
             }
 
@@ -1202,11 +1207,11 @@ namespace CactusPie.RamCleanerInterval
                     }
                 }
 
-                string start = $"=== 원인 추적 시작 {DateTime.Now:HH:mm:ss} (화면 표시 + 모드별 상시 측정 + 끊김 원인 추적" +
-                               (_diagHeavy.Value ? " + 누수 추적·오브젝트 수" : string.Empty) + ") ===";
+                string start = Loc.L($"=== 원인 추적 시작 {DateTime.Now:HH:mm:ss} (화면 표시 + 모드별 상시 측정 + 끊김 원인 추적", $"=== Diagnostic mode started {DateTime.Now:HH:mm:ss} (overlay + per-mod measuring all the time + stutter causes") +
+                               (_diagHeavy.Value ? Loc.L(" + 누수 추적·오브젝트 수", " + leak tracker · object counts") : string.Empty) + ") ===";
                 _sessionLog?.WriteBlock(start);
                 Logger.LogInfo("Diagnostic mode ON");
-                Notify($"RAM 클리너: 원인 추적 시작 — {_diagHotkey.Value} 로 끄기", false);
+                Notify(Loc.L($"RAM 클리너: 원인 추적 시작 — {_diagHotkey.Value} 로 끄기", $"RAM Cleaner: diagnostic mode on — {_diagHotkey.Value} to turn off"), false);
                 return;
             }
 
@@ -1214,61 +1219,61 @@ namespace CactusPie.RamCleanerInterval
             _sessionLog?.WriteBlock(summary);
             Logger.LogInfo("Diagnostic mode OFF");
             _diagStartedAt = -1f;
-            Notify("RAM 클리너: 원인 추적 종료 — 요약은 전용 로그(BepInEx\\RamCleaner)에 저장", false);
+            Notify(Loc.L("RAM 클리너: 원인 추적 종료 — 요약은 전용 로그(BepInEx\\RamCleaner)에 저장", "RAM Cleaner: diagnostic mode off — summary saved to the dedicated log (BepInEx\\RamCleaner)"), false);
         }
 
         private string BuildDiagSummary(float now)
         {
             var sb = new StringBuilder();
             float minutes = _diagStartedAt >= 0f ? (now - _diagStartedAt) / 60f : 0f;
-            sb.Append($"=== 원인 추적 종료 {DateTime.Now:HH:mm:ss} ({minutes:0}분) — 요약 ===\n");
-            sb.Append($"FPS: 지금 {_frames.CurrentFps:0}, 레이드 평균 {_frames.AverageFps:0}, 1% 저점 {_frames.OnePercentLowFps():0}\n");
+            sb.Append(Loc.L($"=== 원인 추적 종료 {DateTime.Now:HH:mm:ss} ({minutes:0}분) — 요약 ===\n", $"=== Diagnostic mode ended {DateTime.Now:HH:mm:ss} ({minutes:0} min) — summary ===\n"));
+            sb.Append(Loc.L($"FPS: 지금 {_frames.CurrentFps:0}, 레이드 평균 {_frames.AverageFps:0}, 1% 저점 {_frames.OnePercentLowFps():0}\n", $"FPS: now {_frames.CurrentFps:0}, raid average {_frames.AverageFps:0}, 1% low {_frames.OnePercentLowFps():0}\n"));
             if (_profiler.LastResult.Count > 0)
             {
-                sb.Append("모드별 부하(프레임당 ms): ")
+                sb.Append(Loc.L("모드별 부하(프레임당 ms): ", "per-mod cost (ms per frame): "))
                   .Append(string.Join(", ", _profiler.LastResult.Take(8).Select(kv => $"{kv.Key} {kv.Value:0.00}")))
-                  .Append($" / 프레임 {_profiler.LastFrameMs:0.0}ms\n");
+                  .Append(Loc.L($" / 프레임 {_profiler.LastFrameMs:0.0}ms\n", $" / frame {_profiler.LastFrameMs:0.0} ms\n"));
             }
 
             if (_profiler.LastAlloc.Count > 0)
             {
-                sb.Append($"모드별 메모리 생성(MB/분, {_profiler.AllocMethod}): ")
+                sb.Append(Loc.L($"모드별 메모리 생성(MB/분, {_profiler.AllocMethod}): ", $"per-mod memory creation (MB/min, {_profiler.AllocMethod}): "))
                   .Append(string.Join(", ", _profiler.LastAlloc.Take(8).Select(kv => $"{kv.Key} {kv.Value:0}"))).Append('\n');
             }
 
             List<KeyValuePair<string, KeyValuePair<int, float>>> causes = _hitch.Causes();
             if (causes.Count > 0)
             {
-                sb.Append($"끊김 원인({_hitch.Count}회): ")
-                  .Append(string.Join(", ", causes.Select(c => $"{c.Key} {c.Value.Key}회(최대 {c.Value.Value:0}ms)"))).Append('\n');
+                sb.Append(Loc.L($"끊김 원인({_hitch.Count}회): ", $"stutter causes ({_hitch.Count}): "))
+                  .Append(string.Join(", ", causes.Select(c => Loc.L($"{c.Key} {c.Value.Key}회(최대 {c.Value.Value:0}ms)", $"{c.Key} {c.Value.Key}x (worst {c.Value.Value:0} ms)")))).Append('\n');
             }
 
             double slope = GcFloorSlopeMbPerMin();
             if (!double.IsNaN(slope))
             {
-                sb.Append($"GC 뒤 남는 관리 메모리: 분당 {slope:+0;-0}MB\n");
+                sb.Append(Loc.L($"GC 뒤 남는 관리 메모리: 분당 {slope:+0;-0}MB\n", $"managed memory left after GC: {slope:+0;-0} MB/min\n"));
             }
 
             double perDeath = RecentPerDeathMb();
             if (perDeath >= 0)
             {
-                sb.Append($"사망 1명당 메모리(최근): {perDeath:0}MB\n");
+                sb.Append(Loc.L($"사망 1명당 메모리(최근): {perDeath:0}MB\n", $"memory per death (recent): {perDeath:0} MB\n"));
             }
 
-            sb.Append("의심: ");
+            sb.Append(Loc.L("의심: ", "suspect: "));
             var suspects = new List<string>();
             if (_profiler.Suspect != null)
             {
-                suspects.Add("프레임 — " + _profiler.Suspect);
+                suspects.Add(Loc.L("프레임 — ", "frame — ") + _profiler.Suspect);
             }
 
             if (_hitch.Suspect != null)
             {
-                suspects.Add("끊김 — " + _hitch.Suspect);
+                suspects.Add(Loc.L("끊김 — ", "stutter — ") + _hitch.Suspect);
             }
 
             suspects.AddRange(_memSuspects);
-            sb.Append(suspects.Count > 0 ? string.Join(" / ", suspects) : "없음");
+            sb.Append(suspects.Count > 0 ? string.Join(" / ", suspects) : Loc.L("없음", "none"));
             return sb.ToString();
         }
 
@@ -1284,7 +1289,7 @@ namespace CactusPie.RamCleanerInterval
             if (_hitchNotify.Value)
             {
                 _report.AddWarning();
-                Notify("끊김 의심: " + _hitch.Suspect, true);
+                Notify(Loc.L("끊김 의심: ", "stutter suspect: ") + _hitch.Suspect, true);
             }
         }
 
@@ -1515,25 +1520,25 @@ namespace CactusPie.RamCleanerInterval
 
             if (_profiler.AllocSuspect != null)
             {
-                _memSuspects.Add("메모리 의심: " + _profiler.AllocSuspect);
+                _memSuspects.Add(Loc.L("메모리 의심: ", "memory suspect: ") + _profiler.AllocSuspect);
             }
 
             double slope = GcFloorSlopeMbPerMin();
             if (!double.IsNaN(slope) && slope >= _retainedSuspectMbPerMin.Value)
             {
-                string top = _profiler.LastAlloc.Count > 0 ? $" — 메모리를 가장 많이 만드는 모드: {_profiler.LastAlloc[0].Key} ({_profiler.LastAlloc[0].Value:0}MB/분)" : string.Empty;
-                _memSuspects.Add($"관리 메모리 누수 의심: GC 뒤에도 분당 {slope:0}MB씩 남음{top}");
+                string top = _profiler.LastAlloc.Count > 0 ? Loc.L($" — 메모리를 가장 많이 만드는 모드: {_profiler.LastAlloc[0].Key} ({_profiler.LastAlloc[0].Value:0}MB/분)", $" — mod creating the most memory: {_profiler.LastAlloc[0].Key} ({_profiler.LastAlloc[0].Value:0} MB/min)") : string.Empty;
+                _memSuspects.Add(Loc.L($"관리 메모리 누수 의심: GC 뒤에도 분당 {slope:0}MB씩 남음{top}", $"managed memory leak suspect: {slope:0} MB/min stays after every GC{top}"));
             }
 
             double perDeath = RecentPerDeathMb();
             if (perDeath >= _perDeathSuspectMb.Value)
             {
-                _memSuspects.Add($"봇 장비 메모리 과다: 사망 1명당 {perDeath:0}MB — 봇 스폰 모드(APBS 등)의 모드 아이템 종류를 줄여 보세요");
+                _memSuspects.Add(Loc.L($"봇 장비 메모리 과다: 사망 1명당 {perDeath:0}MB — 봇 스폰 모드(APBS 등)의 모드 아이템 종류를 줄여 보세요", $"too much bot gear memory: {perDeath:0} MB per death — try fewer modded items in the bot spawn mod (APBS etc.)"));
             }
 
             if (_objects.Suspect != null)
             {
-                _memSuspects.Add("오브젝트 증가 의심: " + _objects.Suspect);
+                _memSuspects.Add(Loc.L("오브젝트 증가 의심: ", "object growth suspect: ") + _objects.Suspect);
             }
 
             // Log each suspect once per raid: same kind + same mod, numbers ignored. Suspects that flicker on and off
@@ -1563,7 +1568,7 @@ namespace CactusPie.RamCleanerInterval
             int deaths = _dead - _deadAtStart;
             if (_nativeAtStart < 0 || deaths < 3)
             {
-                return korean ? "사망 1명당 메모리: 아직 표본 부족 (사망 3명 이상부터)" : "per death n/a";
+                return korean ? Loc.L("사망 1명당 메모리: 아직 표본 부족 (사망 3명 이상부터)", "memory per death: not enough deaths yet (from 3)") : "per death n/a";
             }
 
             double total = (_snapshot.Native - _nativeAtStart) / (1024d * 1024d) / deaths;
@@ -1581,11 +1586,11 @@ namespace CactusPie.RamCleanerInterval
             if (from.HasValue && _dead > from.Value.Key)
             {
                 double last10 = (_snapshot.Native - from.Value.Value) / (1024d * 1024d) / (_dead - from.Value.Key);
-                recent = korean ? $", 최근 {_dead - from.Value.Key}명 기준 {last10:0}MB" : $", last {_dead - from.Value.Key} deaths {last10:0} MB";
+                recent = korean ? Loc.L($", 최근 {_dead - from.Value.Key}명 기준 {last10:0}MB", $", last {_dead - from.Value.Key} deaths {last10:0} MB") : $", last {_dead - from.Value.Key} deaths {last10:0} MB";
             }
 
             return korean
-                ? $"사망 1명당 메모리: 레이드 전체 {total:0}MB{recent} (사망 {deaths}명)"
+                ? Loc.L($"사망 1명당 메모리: 레이드 전체 {total:0}MB{recent} (사망 {deaths}명)", $"memory per death: {total:0} MB over the raid{recent} ({deaths} deaths)")
                 : $"per death {total:0} MB over {deaths} deaths{recent}";
         }
 
@@ -1608,37 +1613,37 @@ namespace CactusPie.RamCleanerInterval
         private void BuildTexts(float now)
         {
             MemorySnapshot s = _snapshot;
-            string gcState = _gc.Running ? $"정리 중 {_gc.Elapsed:0}초" : MemoryStats.ModeName(s.GcMode);
+            string gcState = _gc.Running ? Loc.L($"정리 중 {_gc.Elapsed:0}초", $"cleaning {_gc.Elapsed:0} s") : MemoryStats.ModeName(s.GcMode);
             long vram = _vram.Dedicated;
 
             var sb = new StringBuilder(768);
-            sb.Append("관리 메모리(Mono 힙): 사용 ").Append(MemoryStats.Gb(s.MonoUsed))
-              .Append(" GB / 확보 ").Append(MemoryStats.Gb(s.MonoReserved)).Append(" GB\n");
+            sb.Append(Loc.L("관리 메모리(Mono 힙): 사용 ", "managed memory (Mono heap): used ")).Append(MemoryStats.Gb(s.MonoUsed))
+              .Append(Loc.L(" GB / 확보 ", " GB / reserved ")).Append(MemoryStats.Gb(s.MonoReserved)).Append(" GB\n");
             if (s.SystemTotal > 0)
             {
-                sb.Append("네이티브 메모리(에셋·엔진·모드): ").Append(MemoryStats.Gb(s.Native)).Append(" GB");
+                sb.Append(Loc.L("네이티브 메모리(에셋·엔진·모드): ", "native memory (assets · engine · mods): ")).Append(MemoryStats.Gb(s.Native)).Append(" GB");
                 if (_nativeBaseline >= 0 && _inGame)
                 {
-                    sb.Append(" (마지막 기준점 대비 +").Append(MemoryStats.Gb(Math.Max(0, s.Native - _nativeBaseline))).Append(" GB)");
+                    sb.Append(Loc.L(" (마지막 기준점 대비 +", " (since the last baseline +")).Append(MemoryStats.Gb(Math.Max(0, s.Native - _nativeBaseline))).Append(" GB)");
                 }
 
                 sb.Append('\n');
-                sb.Append("게임 전체: 실제 RAM(워킹셋) ").Append(MemoryStats.Gb(s.WorkingSet))
-                  .Append(" GB / 커밋 ").Append(MemoryStats.Gb(s.PrivateBytes)).Append(" GB\n");
-                sb.Append("시스템 여유 RAM: ").Append(MemoryStats.Gb(s.SystemAvailable)).Append(" / ")
+                sb.Append(Loc.L("게임 전체: 실제 RAM(워킹셋) ", "whole game: RAM in use (working set) ")).Append(MemoryStats.Gb(s.WorkingSet))
+                  .Append(Loc.L(" GB / 커밋 ", " GB / commit ")).Append(MemoryStats.Gb(s.PrivateBytes)).Append(" GB\n");
+                sb.Append(Loc.L("시스템 여유 RAM: ", "system free RAM: ")).Append(MemoryStats.Gb(s.SystemAvailable)).Append(" / ")
                   .Append(MemoryStats.Gb(s.SystemTotal)).Append(" GB (").Append(s.SystemAvailablePercent.ToString("0"))
                   .Append("%)\n");
             }
 
-            sb.Append("VRAM(이 게임): ");
+            sb.Append(Loc.L("VRAM(이 게임): ", "VRAM (this game): "));
             if (vram >= 0)
             {
-                sb.Append("전용 ").Append(MemoryStats.Gb(vram)).Append(" GB / 공유 ").Append(MemoryStats.Gb(_vram.Shared))
-                  .Append(" GB (그래픽카드 ").Append((SystemInfo.graphicsMemorySize / 1024f).ToString("0.0")).Append(" GB)\n");
+                sb.Append(Loc.L("전용 ", "dedicated ")).Append(MemoryStats.Gb(vram)).Append(Loc.L(" GB / 공유 ", " GB / shared ")).Append(MemoryStats.Gb(_vram.Shared))
+                  .Append(Loc.L(" GB (그래픽카드 ", " GB (graphics card ")).Append((SystemInfo.graphicsMemorySize / 1024f).ToString("0.0")).Append(" GB)\n");
             }
             else
             {
-                sb.Append(_vram.Failed ? "측정 불가 (윈도우 성능 카운터 없음)\n" : "측정 중...\n");
+                sb.Append(_vram.Failed ? Loc.L("측정 불가 (윈도우 성능 카운터 없음)\n", "can't measure (no Windows performance counter)\n") : Loc.L("측정 중...\n", "measuring...\n"));
             }
 
             if (_inGame && _raidStartedAt >= 0f)
@@ -1648,9 +1653,9 @@ namespace CactusPie.RamCleanerInterval
 
             if (_serverEnabled.Value)
             {
-                sb.Append("SPT 서버: ").Append(_server.Found
-                    ? $"메모리 {MemoryStats.Gb(_server.PrivateBytes)} GB (커밋) / {MemoryStats.Gb(_server.WorkingSet)} GB (실제 RAM) — {_server.ProcessName}"
-                    : "프로세스를 찾는 중 (30초마다)").Append(" · 측정 장치: ").Append(_server.PatchStatus).Append('\n');
+                sb.Append(Loc.L("SPT 서버: ", "SPT server: ")).Append(_server.Found
+                    ? Loc.L($"메모리 {MemoryStats.Gb(_server.PrivateBytes)} GB (커밋) / {MemoryStats.Gb(_server.WorkingSet)} GB (실제 RAM) — {_server.ProcessName}", $"memory {MemoryStats.Gb(_server.PrivateBytes)} GB (commit) / {MemoryStats.Gb(_server.WorkingSet)} GB (RAM in use) — {_server.ProcessName}")
+                    : Loc.L("프로세스를 찾는 중 (30초마다)", "looking for the process (every 30 s)")).Append(Loc.L(" · 측정 장치: ", " · probe: ")).Append(_server.PatchStatus).Append('\n');
                 string bots = _server.DescribeBots();
                 if (bots != null)
                 {
@@ -1668,44 +1673,44 @@ namespace CactusPie.RamCleanerInterval
             {
                 if (_inGame)
                 {
-                    sb.Append(_forecast.DescribeRunway(RecentPerDeathMb(), s.CommitAvailable, CommitFloor(s)) ?? "여유 예상: 계산 중 (레이드 3분 뒤부터)").Append('\n');
+                    sb.Append(_forecast.DescribeRunway(RecentPerDeathMb(), s.CommitAvailable, CommitFloor(s)) ?? Loc.L("여유 예상: 계산 중 (레이드 3분 뒤부터)", "time left: calculating (from 3 min into the raid)")).Append('\n');
                 }
 
-                sb.Append("재시작 판단: ").Append(_forecast.RestartText).Append('\n');
+                sb.Append(Loc.L("재시작 판단: ", "restart advice: ")).Append(_forecast.RestartText).Append('\n');
             }
 
             if (_heavyEnabled.Value)
             {
-                sb.Append("[실험] 무거운 아이템: ").Append(_heavy.Status).Append(", 측정 ").Append(_heavy.Loads).Append("회\n");
+                sb.Append(Loc.L("[실험] 무거운 아이템: ", "[experimental] heavy items: ")).Append(_heavy.Status).Append(Loc.L(", 측정 ", ", measured ")).Append(_heavy.Loads).Append(Loc.L("회\n", "x\n"));
                 List<HeavyItemTracker.Stat> heavy = _heavy.TopMods(5);
                 if (heavy.Count > 0)
                 {
-                    sb.Append("  ").Append(string.Join(", ", heavy.Select(x => $"{x.Mod} {x.Mb:0}MB({x.Count}개)"))).Append('\n');
+                    sb.Append("  ").Append(string.Join(", ", heavy.Select(x => Loc.L($"{x.Mod} {x.Mb:0}MB({x.Count}개)", $"{x.Mod} {x.Mb:0} MB ({x.Count})")))).Append('\n');
                 }
             }
 
             if (_sessionReportEnabled.Value)
             {
-                sb.Append("세션 보고서: ").Append(_sessionReport.Written ? _sessionReport.FilePath : "레이드 한 판이 끝나면 만들어짐").Append('\n');
+                sb.Append(Loc.L("세션 보고서: ", "session report: ")).Append(_sessionReport.Written ? _sessionReport.FilePath : Loc.L("레이드 한 판이 끝나면 만들어짐", "written once a raid has finished")).Append('\n');
             }
 
-            sb.Append("GC 상태: ").Append(gcState)
-              .Append(" · 나눠서 하는 GC(증분): ").Append(GarbageCollector.isIncremental ? "지원" : "미지원").Append('\n');
+            sb.Append(Loc.L("GC 상태: ", "GC: ")).Append(gcState)
+              .Append(Loc.L(" · 나눠서 하는 GC(증분): ", " · incremental GC: ")).Append(GarbageCollector.isIncremental ? Loc.L("지원", "supported") : Loc.L("미지원", "not supported")).Append('\n');
 
             if (_inGame)
             {
-                sb.Append("전투 상태: ");
+                sb.Append(Loc.L("전투 상태: ", "combat: "));
                 if (_combat.InventoryOpen)
                 {
-                    sb.Append("인벤토리 열림 (정리하기 좋은 순간)");
+                    sb.Append(Loc.L("인벤토리 열림 (정리하기 좋은 순간)", "inventory open (a good moment to clean up)"));
                 }
                 else if (_combat.IsQuiet(_quietSec.Value))
                 {
-                    sb.Append("조용함");
+                    sb.Append(Loc.L("조용함", "quiet"));
                 }
                 else
                 {
-                    sb.Append("전투 중 (마지막 활동 ").Append(_combat.SecondsSinceCombat.ToString("0")).Append("초 전)");
+                    sb.Append(Loc.L("전투 중 (마지막 활동 ", "fighting (last action ")).Append(_combat.SecondsSinceCombat.ToString("0")).Append(Loc.L("초 전)", " s ago)"));
                 }
 
                 sb.Append('\n');
@@ -1715,29 +1720,29 @@ namespace CactusPie.RamCleanerInterval
 
             if (_gcBaseline >= 0 && !_gc.Running)
             {
-                sb.Append("다음 자동 GC: 사용량 ")
-                  .Append(MemoryStats.Gb(_gcBaseline + (long)(_gcGrowthGb.Value * MemoryStats.BytesPerGb))).Append(" GB 도달 시\n");
+                sb.Append(Loc.L("다음 자동 GC: 사용량 ", "next automatic GC: at "))
+                  .Append(MemoryStats.Gb(_gcBaseline + (long)(_gcGrowthGb.Value * MemoryStats.BytesPerGb))).Append(Loc.L(" GB 도달 시\n", " GB used\n"));
             }
 
             if (_autoUnloadStopped || s_autoUnloadUselessThisSession)
             {
-                sb.Append("레이드 중 자동 에셋 정리: 게임 끌 때까지 중단됨 (정리해도 거의 안 줄어서 — 모드 누수 의심, '누수 추적'을 켜 보세요)\n");
+                sb.Append(Loc.L("레이드 중 자동 에셋 정리: 게임 끌 때까지 중단됨 (정리해도 거의 안 줄어서 — 모드 누수 의심, '누수 추적'을 켜 보세요)\n", "automatic asset cleanup in raid: paused until the game closes (it freed almost nothing — possible mod leak, try the 'leak tracker')\n"));
             }
 
-            sb.Append("마지막 GC 정리: ").Append(_gc.LastResult).Append('\n');
-            sb.Append("마지막 워킹셋 정리: ").Append(_lastTrimResult).Append('\n');
-            sb.Append("마지막 에셋 정리: ").Append(_lastAssetResult).Append('\n');
-            sb.Append("FPS: 지금 ").Append(_frames.CurrentFps.ToString("0"));
+            sb.Append(Loc.L("마지막 GC 정리: ", "last GC: ")).Append(_gc.LastResult).Append('\n');
+            sb.Append(Loc.L("마지막 워킹셋 정리: ", "last working set trim: ")).Append(_lastTrimResult ?? NoneYet).Append('\n');
+            sb.Append(Loc.L("마지막 에셋 정리: ", "last asset cleanup: ")).Append(_lastAssetResult ?? NoneYet).Append('\n');
+            sb.Append(Loc.L("FPS: 지금 ", "FPS: now ")).Append(_frames.CurrentFps.ToString("0"));
             if (_frames.Frames > 0)
             {
-                sb.Append(" · 레이드 평균 ").Append(_frames.AverageFps.ToString("0"))
-                  .Append(" · 1% 저점 ").Append(_frames.OnePercentLowFps().ToString("0"));
+                sb.Append(Loc.L(" · 레이드 평균 ", " · raid average ")).Append(_frames.AverageFps.ToString("0"))
+                  .Append(Loc.L(" · 1% 저점 ", " · 1% low ")).Append(_frames.OnePercentLowFps().ToString("0"));
             }
 
             sb.Append('\n');
             if (_profilerEnabled.Value)
             {
-                sb.Append("모드별 부하: ").Append(DescribeProfilerState()).Append('\n');
+                sb.Append(Loc.L("모드별 부하: ", "per-mod cost: ")).Append(DescribeProfilerState()).Append('\n');
                 if (_profiler.LastResult.Count > 0)
                 {
                     sb.Append("  ");
@@ -1757,7 +1762,7 @@ namespace CactusPie.RamCleanerInterval
 
             if (_profilerEnabled.Value && _profiler.LastAlloc.Count > 0)
             {
-                sb.Append("모드별 메모리 생성(MB/분, ").Append(_profiler.AllocMethod).Append("): ");
+                sb.Append(Loc.L("모드별 메모리 생성(MB/분, ", "per-mod memory creation (MB/min, ")).Append(_profiler.AllocMethod).Append("): ");
                 for (int i = 0; i < Math.Min(6, _profiler.LastAlloc.Count); i++)
                 {
                     if (i > 0)
@@ -1774,7 +1779,7 @@ namespace CactusPie.RamCleanerInterval
             double floorSlope = GcFloorSlopeMbPerMin();
             if (!double.IsNaN(floorSlope))
             {
-                sb.Append("GC 뒤에도 남는 관리 메모리: 분당 ").Append(floorSlope.ToString("+0;-0")).Append("MB (").Append(_gcFloors.Count).Append("회 기준)\n");
+                sb.Append(Loc.L("GC 뒤에도 남는 관리 메모리: 분당 ", "managed memory left after GC: ")).Append(floorSlope.ToString("+0;-0")).Append("MB (").Append(_gcFloors.Count).Append(Loc.L("회 기준)\n", " GCs)\n"));
             }
 
             foreach (string suspectLine in _memSuspects)
@@ -1784,22 +1789,22 @@ namespace CactusPie.RamCleanerInterval
 
             if (ObjectsOn)
             {
-                sb.Append("모드별 오브젝트: ").Append(_objects.LastSummary).Append('\n');
+                sb.Append(Loc.L("모드별 오브젝트: ", "per-mod objects: ")).Append(_objects.LastSummary).Append('\n');
             }
 
             if (_fpsHistoryEnabled.Value)
             {
-                sb.Append("이전 레이드 비교: ").Append(_history.LastComparison).Append('\n');
+                sb.Append(Loc.L("이전 레이드 비교: ", "vs previous raid: ")).Append(_history.LastComparison).Append('\n');
             }
 
             if (_hitchEnabled.Value)
             {
-                sb.Append("끊김(이번 레이드): ").Append(_hitch.Count).Append("회, 그중 이 모드 ").Append(_hitch.Ours)
-                  .Append("회, 최대 ").Append(_hitch.MaxMs.ToString("0")).Append("ms · 마지막: ").Append(_hitch.LastText).Append('\n');
+                sb.Append(Loc.L("끊김(이번 레이드): ", "stutters (this raid): ")).Append(_hitch.Count).Append(Loc.L("회, 그중 이 모드 ", ", by this mod ")).Append(_hitch.Ours)
+                  .Append(Loc.L("회, 최대 ", ", worst ")).Append(_hitch.MaxMs.ToString("0")).Append(Loc.L("ms · 마지막: ", " ms · last: ")).Append(_hitch.LastText).Append('\n');
                 List<KeyValuePair<string, KeyValuePair<int, float>>> causes = _hitch.Causes();
                 if (causes.Count > 0)
                 {
-                    sb.Append("  끊김 원인: ");
+                    sb.Append(Loc.L("  끊김 원인: ", "  stutter causes: "));
                     for (int i = 0; i < Math.Min(6, causes.Count); i++)
                     {
                         if (i > 0)
@@ -1807,7 +1812,7 @@ namespace CactusPie.RamCleanerInterval
                             sb.Append(", ");
                         }
 
-                        sb.Append(causes[i].Key).Append(' ').Append(causes[i].Value.Key).Append("회(최대 ")
+                        sb.Append(causes[i].Key).Append(' ').Append(causes[i].Value.Key).Append(Loc.L("회(최대 ", "x (worst "))
                           .Append(causes[i].Value.Value.ToString("0")).Append("ms)");
                     }
 
@@ -1816,26 +1821,26 @@ namespace CactusPie.RamCleanerInterval
 
                 if (_hitch.Suspect != null)
                 {
-                    sb.Append("-> 끊김 의심: ").Append(_hitch.Suspect).Append('\n');
+                    sb.Append(Loc.L("-> 끊김 의심: ", "-> stutter suspect: ")).Append(_hitch.Suspect).Append('\n');
                 }
             }
 
             if (_warnEnabled.Value)
             {
-                sb.Append("마지막 경고: ").Append(_warnings.LastText).Append('\n');
+                sb.Append(Loc.L("마지막 경고: ", "last warning: ")).Append(_warnings.LastText).Append('\n');
             }
 
             if (_reportEnabled.Value)
             {
-                sb.Append("마지막 레이드 결산: ").Append(_lastReport).Append('\n');
+                sb.Append(Loc.L("마지막 레이드 결산: ", "last raid report: ")).Append(_lastReport ?? NoneYet).Append('\n');
             }
 
-            sb.Append("레이드 후 남은 메모리: ").Append(_keptAfterRaid).Append('\n');
+            sb.Append(Loc.L("레이드 후 남은 메모리: ", "memory kept after the raid: ")).Append(_keptAfterRaid ?? NoneYet).Append('\n');
 
-            sb.Append("누수 추적: ").Append(LeakOn || _leak.Snapshots > 0 ? _leak.LastSummary : "꺼짐").Append('\n');
-            sb.Append("원인 추적 모드: ").Append(_diagMode.Value ? $"켜짐 ({(Time.realtimeSinceStartup - Math.Max(0f, _diagStartedAt)) / 60f:0}분째)" : "꺼짐")
-              .Append($" — 단축키 {_diagHotkey.Value}\n");
-            sb.Append("전용 로그: ").Append(_sessionLog?.FilePath ?? "만들 수 없음");
+            sb.Append(Loc.L("누수 추적: ", "leak tracker: ")).Append(LeakOn || _leak.Snapshots > 0 ? _leak.LastSummary : Loc.L("꺼짐", "off")).Append('\n');
+            sb.Append(Loc.L("원인 추적 모드: ", "diagnostic mode: ")).Append(_diagMode.Value ? Loc.L($"켜짐 ({(Time.realtimeSinceStartup - Math.Max(0f, _diagStartedAt)) / 60f:0}분째)", $"on ({(Time.realtimeSinceStartup - Math.Max(0f, _diagStartedAt)) / 60f:0} min)") : Loc.L("꺼짐", "off"))
+              .Append(Loc.L($" — 단축키 {_diagHotkey.Value}\n", $" — hotkey {_diagHotkey.Value}\n"));
+            sb.Append(Loc.L("전용 로그: ", "dedicated log: ")).Append(_sessionLog?.FilePath ?? Loc.L("만들 수 없음", "can't be created"));
             _statusText = sb.ToString();
 
             if (OverlayOn)
@@ -1852,17 +1857,17 @@ namespace CactusPie.RamCleanerInterval
         {
             if (_gcPendingSince >= 0f)
             {
-                sb.Append("대기 중: GC (전투가 끝나길 기다리는 중, ").Append((now - _gcPendingSince).ToString("0")).Append("초)\n");
+                sb.Append(Loc.L("대기 중: GC (전투가 끝나길 기다리는 중, ", "waiting: GC (until the fighting stops, ")).Append((now - _gcPendingSince).ToString("0")).Append(Loc.L("초)\n", " s)\n"));
             }
 
             if (_unloadPendingSince >= 0f)
             {
-                sb.Append("대기 중: 에셋 정리 (조용한 순간 또는 인벤토리 열 때, ").Append((now - _unloadPendingSince).ToString("0")).Append("초)\n");
+                sb.Append(Loc.L("대기 중: 에셋 정리 (조용한 순간 또는 인벤토리 열 때, ", "waiting: asset cleanup (quiet moment or inventory, ")).Append((now - _unloadPendingSince).ToString("0")).Append(Loc.L("초)\n", " s)\n"));
             }
 
             if (_trimPendingSince >= 0f)
             {
-                sb.Append("대기 중: 워킹셋 정리 (").Append((now - _trimPendingSince).ToString("0")).Append("초)\n");
+                sb.Append(Loc.L("대기 중: 워킹셋 정리 (", "waiting: working set trim (")).Append((now - _trimPendingSince).ToString("0")).Append(Loc.L("초)\n", " s)\n"));
             }
         }
 
@@ -1871,14 +1876,14 @@ namespace CactusPie.RamCleanerInterval
             switch (_profiler.Status)
             {
                 case ModCostProfiler.State.NotInstalled:
-                    return "메인 메뉴에서 측정 장치 설치 대기";
+                    return Loc.L("메인 메뉴에서 측정 장치 설치 대기", "probe installs in the main menu");
                 case ModCostProfiler.State.Installing:
-                    return "측정 장치 설치 중...";
+                    return Loc.L("측정 장치 설치 중...", "installing the probe...");
             }
 
             if (_profiler.Measuring)
             {
-                return $"측정 중 {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value}초";
+                return Loc.L($"측정 중 {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value}초", $"measuring {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value} s");
             }
 
             return _profiler.LastSummary;
@@ -1892,19 +1897,19 @@ namespace CactusPie.RamCleanerInterval
             if (_diagMode.Value)
             {
                 float minutes = (now - Math.Max(0f, _diagStartedAt)) / 60f;
-                _panel.Header($"● 원인 추적 중 — {_diagHotkey.Value} 로 끄기", OverlayPanel.Yellow, $"{minutes:0}분째");
+                _panel.Header(Loc.L($"● 원인 추적 중 — {_diagHotkey.Value} 로 끄기", $"● Diagnostic mode — {_diagHotkey.Value} to turn off"), OverlayPanel.Yellow, Loc.L($"{minutes:0}분째", $"{minutes:0} min"));
             }
 
             // --- memory
-            _panel.Header("메모리", OverlayPanel.Blue, $"GC {gcState}");
+            _panel.Header(Loc.L("메모리", "Memory"), OverlayPanel.Blue, $"GC {gcState}");
             string vramText = vram >= 0 ? MemoryStats.Gb(vram) : "?";
-            _panel.Text($"힙 {MemoryStats.Gb(s.MonoUsed)} · 네이티브 {MemoryStats.Gb(s.Native)} · VRAM {vramText} · 시스템 여유 {MemoryStats.Gb(s.SystemAvailable)} (GB)");
+            _panel.Text(Loc.L($"힙 {MemoryStats.Gb(s.MonoUsed)} · 네이티브 {MemoryStats.Gb(s.Native)} · VRAM {vramText} · 시스템 여유 {MemoryStats.Gb(s.SystemAvailable)} (GB)", $"heap {MemoryStats.Gb(s.MonoUsed)} · native {MemoryStats.Gb(s.Native)} · VRAM {vramText} · system free {MemoryStats.Gb(s.SystemAvailable)} (GB)"));
             if (_inGame)
             {
                 double slope = GcFloorSlopeMbPerMin();
                 double perDeath = RecentPerDeathMb();
-                string extra = (perDeath >= 0 ? $"사망당 {perDeath:0}MB" : "사망당 -") +
-                               (!double.IsNaN(slope) ? $" · GC 뒤 남는 양 {slope:+0;-0}MB/분" : string.Empty);
+                string extra = (perDeath >= 0 ? Loc.L($"사망당 {perDeath:0}MB", $"per death {perDeath:0} MB") : Loc.L("사망당 -", "per death -")) +
+                               (!double.IsNaN(slope) ? Loc.L($" · GC 뒤 남는 양 {slope:+0;-0}MB/분", $" · left after GC {slope:+0;-0} MB/min") : string.Empty);
                 _panel.Text(extra, OverlayPanel.Dim);
             }
 
@@ -1921,7 +1926,7 @@ namespace CactusPie.RamCleanerInterval
                 }
                 else
                 {
-                    _panel.Text("재시작 판단: " + _forecast.RestartText, _forecast.RaidsLeft >= 0 && _forecast.RaidsLeft <= 1 ? OverlayPanel.Red : OverlayPanel.Dim);
+                    _panel.Text(Loc.L("재시작 판단: ", "restart advice: ") + _forecast.RestartText, _forecast.RaidsLeft >= 0 && _forecast.RaidsLeft <= 1 ? OverlayPanel.Red : OverlayPanel.Dim);
                 }
             }
 
@@ -1933,15 +1938,15 @@ namespace CactusPie.RamCleanerInterval
             // --- frames
             if (_overlayFps.Value)
             {
-                _panel.Header("프레임", OverlayPanel.Green, _hitchEnabled.Value && _inGame ? $"끊김 {_hitch.Count}회" : null);
+                _panel.Header(Loc.L("프레임", "Frames"), OverlayPanel.Green, _hitchEnabled.Value && _inGame ? Loc.L($"끊김 {_hitch.Count}회", $"{_hitch.Count} stutters") : null);
                 _panel.Text($"FPS {_frames.CurrentFps:0}" +
-                            (_frames.Frames > 0 ? $"  ·  평균 {_frames.AverageFps:0}  ·  1% 저점 {_frames.OnePercentLowFps():0}" : string.Empty));
+                            (_frames.Frames > 0 ? Loc.L($"  ·  평균 {_frames.AverageFps:0}  ·  1% 저점 {_frames.OnePercentLowFps():0}", $"  ·  avg {_frames.AverageFps:0}  ·  1% low {_frames.OnePercentLowFps():0}") : string.Empty));
             }
 
             // --- SPT server
             if (_serverEnabled.Value && _overlayServer.Value)
             {
-                _panel.Header("SPT 서버", OverlayPanel.Gray, _server.Found ? $"메모리 {MemoryStats.Gb(_server.PrivateBytes)} GB" : "프로세스 찾는 중");
+                _panel.Header(Loc.L("SPT 서버", "SPT server"), OverlayPanel.Gray, _server.Found ? Loc.L($"메모리 {MemoryStats.Gb(_server.PrivateBytes)} GB", $"memory {MemoryStats.Gb(_server.PrivateBytes)} GB") : Loc.L("프로세스 찾는 중", "looking for the process"));
                 string bots = _server.DescribeBots();
                 if (bots != null)
                 {
@@ -1956,7 +1961,7 @@ namespace CactusPie.RamCleanerInterval
 
                 if (bots == null && waits == null)
                 {
-                    _panel.Text(_inGame ? "이번 레이드 서버 요청 기록 없음" : "레이드 중 봇 생성 응답·서버 대기를 기록", OverlayPanel.Dim);
+                    _panel.Text(_inGame ? Loc.L("이번 레이드 서버 요청 기록 없음", "no server requests recorded this raid") : Loc.L("레이드 중 봇 생성 응답·서버 대기를 기록", "records bot generation and server waits in raid"), OverlayPanel.Dim);
                 }
             }
 
@@ -1964,7 +1969,7 @@ namespace CactusPie.RamCleanerInterval
             if (_heavyEnabled.Value && _overlayHeavy.Value)
             {
                 List<HeavyItemTracker.Stat> heavy = _heavy.TopMods(_overlayModCount.Value);
-                _panel.Header("[실험] 처음 로드 메모리 (모드별)", OverlayPanel.Purple, $"측정 {_heavy.Loads}회");
+                _panel.Header(Loc.L("[실험] 처음 로드 메모리 (모드별)", "[Experimental] first-load memory (per mod)"), OverlayPanel.Purple, Loc.L($"측정 {_heavy.Loads}회", $"{_heavy.Loads} measured"));
                 if (heavy.Count == 0)
                 {
                     _panel.Text(_heavy.Status, OverlayPanel.Dim);
@@ -1974,7 +1979,7 @@ namespace CactusPie.RamCleanerInterval
                     double most = Math.Max(1.0, heavy.Max(x => x.Mb));
                     foreach (HeavyItemTracker.Stat item in heavy)
                     {
-                        _panel.Bar(item.Mod, (float)(item.Mb / most), $"{item.Mb:0}MB · {item.Count}개" + (item.Overlapped > 0 ? $" (겹침 {item.Overlapped})" : string.Empty),
+                        _panel.Bar(item.Mod, (float)(item.Mb / most), Loc.L($"{item.Mb:0}MB · {item.Count}개", $"{item.Mb:0} MB · {item.Count}") + (item.Overlapped > 0 ? Loc.L($" (겹침 {item.Overlapped})", $" ({item.Overlapped} overlapped)") : string.Empty),
                             OverlayPanel.Purple);
                     }
                 }
@@ -1989,11 +1994,11 @@ namespace CactusPie.RamCleanerInterval
             if (_overlayMods.Value)
             {
                 string when = _profiler.Measuring && _profiler.LastResultTime < 0f
-                    ? $"측정 중 {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value}초"
+                    ? Loc.L($"측정 중 {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value}초", $"measuring {_profiler.WindowElapsed:0}/{_profilerWindowSec.Value} s")
                     : _profiler.LastResultTime >= 0f
-                        ? ((now - _profiler.LastResultTime) < 60f ? "방금" : $"{(now - _profiler.LastResultTime) / 60f:0}분 전") + $" · 프레임 {_profiler.LastFrameMs:0.0}ms"
+                        ? ((now - _profiler.LastResultTime) < 60f ? Loc.L("방금", "just now") : Loc.L($"{(now - _profiler.LastResultTime) / 60f:0}분 전", $"{(now - _profiler.LastResultTime) / 60f:0} min ago")) + Loc.L($" · 프레임 {_profiler.LastFrameMs:0.0}ms", $" · frame {_profiler.LastFrameMs:0.0} ms")
                         : DescribeProfilerState();
-                _panel.Header("모드별 부하 (프레임당 ms)", OverlayPanel.Yellow, when);
+                _panel.Header(Loc.L("모드별 부하 (프레임당 ms)", "Per-mod cost (ms per frame)"), OverlayPanel.Yellow, when);
                 float scale = 4f;
                 int count = Math.Min(_overlayModCount.Value, _profiler.LastResult.Count);
                 for (int i = 0; i < count; i++)
@@ -2012,14 +2017,14 @@ namespace CactusPie.RamCleanerInterval
 
                 if (_profiler.Suspect != null)
                 {
-                    _panel.Text("의심: " + _profiler.Suspect, OverlayPanel.Red);
+                    _panel.Text(Loc.L("의심: ", "suspect: ") + _profiler.Suspect, OverlayPanel.Red);
                 }
             }
 
             // --- per-mod memory creation
             if (_overlayMem.Value && _memSuspectEnabled.Value && _profiler.LastAlloc.Count > 0)
             {
-                _panel.Header("모드별 메모리 생성 (MB/분)", OverlayPanel.Blue, $"합계 {_profiler.LastAllocTotal:0}MB/분");
+                _panel.Header(Loc.L("모드별 메모리 생성 (MB/분)", "Per-mod memory creation (MB/min)"), OverlayPanel.Blue, Loc.L($"합계 {_profiler.LastAllocTotal:0}MB/분", $"total {_profiler.LastAllocTotal:0} MB/min"));
                 float scale = 50f;
                 int count = Math.Min(_overlayModCount.Value, _profiler.LastAlloc.Count);
                 for (int i = 0; i < count; i++)
@@ -2032,7 +2037,7 @@ namespace CactusPie.RamCleanerInterval
                 {
                     KeyValuePair<string, float> bar = _profiler.LastAlloc[i];
                     bool suspect = _profiler.AllocSuspect != null && _profiler.AllocSuspect.StartsWith(bar.Key, StringComparison.Ordinal);
-                    _panel.Bar(bar.Key, bar.Value / scale, $"{bar.Value:0}MB/분",
+                    _panel.Bar(bar.Key, bar.Value / scale, Loc.L($"{bar.Value:0}MB/분", $"{bar.Value:0} MB/min"),
                         suspect ? OverlayPanel.Red : bar.Value / total >= 0.25f ? OverlayPanel.Yellow : OverlayPanel.Blue);
                 }
             }
@@ -2040,8 +2045,8 @@ namespace CactusPie.RamCleanerInterval
             // --- hitch causes
             if (_overlayHitch.Value && _hitchEnabled.Value && _inGame && _hitch.Count > 0)
             {
-                _panel.Header("끊김 원인 (이번 레이드)", OverlayPanel.Purple,
-                    $"{_hitch.Count}회 · {_hitchThresholdMs.Value}ms 이상" + (HitchModTrackingOn ? string.Empty : " · 모드 추적 꺼짐"));
+                _panel.Header(Loc.L("끊김 원인 (이번 레이드)", "Stutter causes (this raid)"), OverlayPanel.Purple,
+                    Loc.L($"{_hitch.Count}회 · {_hitchThresholdMs.Value}ms 이상", $"{_hitch.Count} · over {_hitchThresholdMs.Value} ms") + (HitchModTrackingOn ? string.Empty : Loc.L(" · 모드 추적 꺼짐", " · mod tracking off")));
                 List<KeyValuePair<string, KeyValuePair<int, float>>> causes = _hitch.Causes();
                 int most = 1;
                 foreach (KeyValuePair<string, KeyValuePair<int, float>> cause in causes)
@@ -2053,20 +2058,20 @@ namespace CactusPie.RamCleanerInterval
                 {
                     KeyValuePair<string, KeyValuePair<int, float>> cause = causes[i];
                     bool suspect = _hitch.Suspect != null && _hitch.Suspect.StartsWith(cause.Key, StringComparison.Ordinal);
-                    _panel.Bar(cause.Key, cause.Value.Key / (float)most, $"{cause.Value.Key}회 · 최대 {cause.Value.Value:0}ms",
+                    _panel.Bar(cause.Key, cause.Value.Key / (float)most, Loc.L($"{cause.Value.Key}회 · 최대 {cause.Value.Value:0}ms", $"{cause.Value.Key}x · worst {cause.Value.Value:0} ms"),
                         suspect ? OverlayPanel.Red : cause.Key == HitchMonitor.CauseGame ? OverlayPanel.Gray : OverlayPanel.Purple);
                 }
 
                 if (_hitch.Suspect != null)
                 {
-                    _panel.Text("의심: " + _hitch.Suspect, OverlayPanel.Red);
+                    _panel.Text(Loc.L("의심: ", "suspect: ") + _hitch.Suspect, OverlayPanel.Red);
                 }
             }
         }
 
         private void ManualButtonsDrawer(ConfigEntryBase entry)
         {
-            if (GUILayout.Button(_gc.Running ? "GC 정리 중..." : "GC 정리", GUILayout.ExpandWidth(true)) && !_gc.Running)
+            if (GUILayout.Button(_gc.Running ? Loc.L("GC 정리 중...", "GC running...") : Loc.L("GC 정리", "Run GC"), GUILayout.ExpandWidth(true)) && !_gc.Running)
             {
                 if (!_gc.Start("manual", true, false))
                 {
@@ -2074,27 +2079,27 @@ namespace CactusPie.RamCleanerInterval
                 }
             }
 
-            if (GUILayout.Button(_trimRunning != 0 ? "워킹셋 정리 중..." : "워킹셋 정리", GUILayout.ExpandWidth(true)))
+            if (GUILayout.Button(_trimRunning != 0 ? Loc.L("워킹셋 정리 중...", "Trimming working set...") : Loc.L("워킹셋 정리", "Trim working set"), GUILayout.ExpandWidth(true)))
             {
                 StartTrim("manual");
             }
 
-            if (GUILayout.Button(_assetPhase != AssetPhase.Idle ? "에셋 정리 중..." : "에셋 정리", GUILayout.ExpandWidth(true)))
+            if (GUILayout.Button(_assetPhase != AssetPhase.Idle ? Loc.L("에셋 정리 중...", "Unloading assets...") : Loc.L("에셋 정리", "Unload assets"), GUILayout.ExpandWidth(true)))
             {
                 StartAssetUnload("manual", _unloadGcFirst.Value, false);
             }
 
-            if (GUILayout.Button("누수 추적 기록", GUILayout.ExpandWidth(true)))
+            if (GUILayout.Button(Loc.L("누수 추적 기록", "Take a leak snapshot"), GUILayout.ExpandWidth(true)))
             {
                 RunLeakSnapshot("manual");
             }
 
-            if (GUILayout.Button(_diagMode.Value ? "원인 추적 끄기" : "원인 추적 켜기", GUILayout.ExpandWidth(true)))
+            if (GUILayout.Button(_diagMode.Value ? Loc.L("원인 추적 끄기", "Turn diagnostic mode off") : Loc.L("원인 추적 켜기", "Turn diagnostic mode on"), GUILayout.ExpandWidth(true)))
             {
                 _diagMode.Value = !_diagMode.Value;
             }
 
-            if (GUILayout.Button("세션 보고서 열기 (브라우저)", GUILayout.ExpandWidth(true)))
+            if (GUILayout.Button(Loc.L("세션 보고서 열기 (브라우저)", "Open session report (browser)"), GUILayout.ExpandWidth(true)))
             {
                 OpenSessionReport();
             }

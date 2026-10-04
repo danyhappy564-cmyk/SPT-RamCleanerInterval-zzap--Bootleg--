@@ -40,7 +40,9 @@ namespace CactusPie.RamCleanerInterval
             _log = log;
         }
 
-        public string LastSummary { get; private set; } = "아직 없음";
+        private string _lastSummary;
+
+        public string LastSummary { get => _lastSummary ?? Loc.L("아직 없음", "none yet"); private set => _lastSummary = value; }
 
         public int Snapshots => _snapshots;
 
@@ -51,7 +53,7 @@ namespace CactusPie.RamCleanerInterval
             _firstRoots = null;
             _lastTypes = null;
             _snapshots = 0;
-            LastSummary = "아직 없음";
+            LastSummary = null;
         }
 
         public void Snapshot(string reason)
@@ -143,7 +145,8 @@ namespace CactusPie.RamCleanerInterval
                 _firstObjects = all.Length;
                 _firstTime = now;
                 _lastTypes = types;
-                LastSummary = $"{DateTime.Now:HH:mm:ss} 기준점 저장: 오브젝트 {all.Length:N0}개, 씬 GameObject {sceneObjects:N0}개 ({watch.ElapsedMilliseconds}ms)";
+                LastSummary = Loc.L($"{DateTime.Now:HH:mm:ss} 기준점 저장: 오브젝트 {all.Length:N0}개, 씬 GameObject {sceneObjects:N0}개 ({watch.ElapsedMilliseconds}ms)",
+                                    $"{DateTime.Now:HH:mm:ss} baseline saved: {all.Length:N0} objects, {sceneObjects:N0} scene GameObjects ({watch.ElapsedMilliseconds} ms)");
                 _log.LogInfo($"[leak] #{_snapshots} baseline ({reason}) in {watch.ElapsedMilliseconds}ms: objects {all.Length}, scene GameObjects {sceneObjects}, " +
                              $"RenderTextures {renderTextures} ({renderTexturePixels / 1000000.0:0.0} MPix), inactive scene GameObjects {inactive}, " +
                              $"corpses {corpses}, pool objects active {pooledActive} / idle {pooledIdle}");
@@ -174,9 +177,13 @@ namespace CactusPie.RamCleanerInterval
                 .Select(kv => new KeyValuePair<string, int>(kv.Key, kv.Value - Get(_firstNames, kv.Key)))
                 .OrderByDescending(kv => kv.Value)
                 .FirstOrDefault();
-            LastSummary = $"{DateTime.Now:HH:mm:ss} {minutes:0}분 동안 오브젝트 {Signed(all.Length - _firstObjects)}개 — " +
-                          $"가장 많이 는 종류 {topType.Key?.Name ?? "-"} {Signed(topType.Value)}, " +
-                          $"이름 '{topName.Key ?? "-"}' {Signed(topName.Value)} ({watch.ElapsedMilliseconds}ms, 자세한 건 로그의 [leak])";
+            LastSummary = Loc.L(
+                $"{DateTime.Now:HH:mm:ss} {minutes:0}분 동안 오브젝트 {Signed(all.Length - _firstObjects)}개 — " +
+                $"가장 많이 는 종류 {topType.Key?.Name ?? "-"} {Signed(topType.Value)}, " +
+                $"이름 '{topName.Key ?? "-"}' {Signed(topName.Value)} ({watch.ElapsedMilliseconds}ms, 자세한 건 로그의 [leak])",
+                $"{DateTime.Now:HH:mm:ss} objects {Signed(all.Length - _firstObjects)} in {minutes:0} min — " +
+                $"fastest-growing type {topType.Key?.Name ?? "-"} {Signed(topType.Value)}, " +
+                $"name '{topName.Key ?? "-"}' {Signed(topName.Value)} ({watch.ElapsedMilliseconds} ms, details in the log's [leak] lines)");
             _lastTypes = types;
         }
 

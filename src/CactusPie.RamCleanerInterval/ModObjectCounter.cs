@@ -26,7 +26,9 @@ namespace CactusPie.RamCleanerInterval
 
         public string Suspect { get; private set; }
 
-        public string LastSummary { get; private set; } = "아직 없음";
+        private string _lastSummary;
+
+        public string LastSummary { get => _lastSummary ?? Loc.L("아직 없음", "none yet"); private set => _lastSummary = value; }
 
         public void Reset()
         {
@@ -66,7 +68,7 @@ namespace CactusPie.RamCleanerInterval
             if (_baseline == null)
             {
                 _baseline = counts;
-                LastSummary = $"{DateTime.Now:HH:mm:ss} 기준점 저장 ({watch.ElapsedMilliseconds}ms)";
+                LastSummary = Loc.L($"{DateTime.Now:HH:mm:ss} 기준점 저장 ({watch.ElapsedMilliseconds}ms)", $"{DateTime.Now:HH:mm:ss} baseline saved ({watch.ElapsedMilliseconds} ms)");
                 _log.LogInfo($"[mod objects] baseline in {watch.ElapsedMilliseconds}ms: " + Top(counts));
                 return watch.ElapsedMilliseconds;
             }
@@ -78,9 +80,10 @@ namespace CactusPie.RamCleanerInterval
                 .ToList();
 
             Suspect = growth.Count > 0 && growth[0].Delta >= suspectGrowth
-                ? $"{ModRegistry.Name(growth[0].Mod)} — 레이드 중 컴포넌트 +{growth[0].Delta}개 (지금 {growth[0].Count}개)"
+                ? Loc.L($"{ModRegistry.Name(growth[0].Mod)} — 레이드 중 컴포넌트 +{growth[0].Delta}개 (지금 {growth[0].Count}개)",
+                        $"{ModRegistry.Name(growth[0].Mod)} — +{growth[0].Delta} components in raid ({growth[0].Count} now)")
                 : null;
-            LastSummary = $"{DateTime.Now:HH:mm:ss} " + (Suspect != null ? "의심: " + Suspect : "계속 늘어나는 모드 없음") + $" ({watch.ElapsedMilliseconds}ms)";
+            LastSummary = $"{DateTime.Now:HH:mm:ss} " + (Suspect != null ? Loc.L("의심: ", "suspect: ") + Suspect : Loc.L("계속 늘어나는 모드 없음", "no mod keeps growing")) + $" ({watch.ElapsedMilliseconds} ms)";
             _log.LogInfo($"[mod objects] in {watch.ElapsedMilliseconds}ms, grown since raid start: " +
                          (growth.Count > 0 ? string.Join(", ", growth.Take(8).Select(x => $"{ModRegistry.Name(x.Mod)} {x.Count} (+{x.Delta})")) : "(none)") +
                          (Suspect != null ? $" | SUSPECT: {Suspect}" : string.Empty));

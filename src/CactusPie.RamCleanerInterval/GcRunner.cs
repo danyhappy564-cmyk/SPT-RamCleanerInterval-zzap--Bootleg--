@@ -47,7 +47,9 @@ namespace CactusPie.RamCleanerInterval
         public float Elapsed => Running ? Time.realtimeSinceStartup - _startTime : 0f;
 
         /// <summary>Human readable result of the last finished collection, for the F12 status box.</summary>
-        public string LastResult { get; private set; } = "아직 없음";
+        private string _lastResult;
+
+        public string LastResult { get => _lastResult ?? Loc.L("아직 없음", "none yet"); private set => _lastResult = value; }
 
         /// <summary>Mono "used" bytes right after the last collection finished (-1 = none yet).</summary>
         public long LastUsedAfter { get; private set; } = -1;
@@ -148,7 +150,7 @@ namespace CactusPie.RamCleanerInterval
             catch (Exception ex)
             {
                 _log.LogError($"CollectIncremental failed: {ex.Message}");
-                Finish(inGame, "오류로 중단");
+                Finish(inGame, Loc.L("오류로 중단", "stopped by an error"));
                 return;
             }
 
@@ -175,7 +177,7 @@ namespace CactusPie.RamCleanerInterval
             }
             else if (Elapsed > MaxRunSeconds)
             {
-                Finish(inGame, $"{MaxRunSeconds:0}초 넘어서 중단");
+                Finish(inGame, Loc.L($"{MaxRunSeconds:0}초 넘어서 중단", $"stopped after {MaxRunSeconds:0} s"));
             }
         }
 
@@ -200,9 +202,10 @@ namespace CactusPie.RamCleanerInterval
             LastMaxSliceMs = _maxSliceMs;
             LastFinishTime = Time.realtimeSinceStartup;
 
-            string status = abortReason == null ? "완료" : abortReason;
+            string status = abortReason == null ? Loc.L("완료", "done") : abortReason;
             LastResult = $"{DateTime.Now:HH:mm:ss} {status} — {MemoryStats.Gb(_usedBefore)} → {MemoryStats.Gb(usedAfter)} GB, " +
-                         $"{seconds:0.0}초 동안 {_frames}프레임에 나눠 처리 (가장 긴 프레임 {_maxSliceMs:0}ms, 16ms 넘은 프레임 {_longSlices}개)";
+                         Loc.L($"{seconds:0.0}초 동안 {_frames}프레임에 나눠 처리 (가장 긴 프레임 {_maxSliceMs:0}ms, 16ms 넘은 프레임 {_longSlices}개)",
+                               $"spread over {_frames} frames in {seconds:0.0} s (longest frame {_maxSliceMs:0} ms, {_longSlices} frames over 16 ms)");
 
             _log.LogInfo($"GC {(abortReason == null ? "done" : "aborted")} ({_reason}): {MemoryStats.Gb(_usedBefore)} -> " +
                          $"{MemoryStats.Gb(usedAfter)} GB in {seconds:0.0}s, {_frames} frames, work {_workMs:0}ms, " +
@@ -264,8 +267,8 @@ namespace CactusPie.RamCleanerInterval
             LastTickMs = LastMaxSliceMs;
             LastTickFrame = Time.frameCount;
             LastFinishTime = Time.realtimeSinceStartup;
-            LastResult = $"{DateTime.Now:HH:mm:ss} 전체 GC(한 번에) — {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB, " +
-                         $"게임 멈춤 {watch.Elapsed.TotalMilliseconds:0}ms";
+            LastResult = Loc.L($"{DateTime.Now:HH:mm:ss} 전체 GC(한 번에) — {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB, 게임 멈춤 {watch.Elapsed.TotalMilliseconds:0}ms",
+                               $"{DateTime.Now:HH:mm:ss} full GC (in one go) — {MemoryStats.Gb(before)} → {MemoryStats.Gb(after)} GB, game frozen {watch.Elapsed.TotalMilliseconds:0} ms");
             _log.LogInfo($"GC blocking ({reason}): {MemoryStats.Gb(before)} -> {MemoryStats.Gb(after)} GB, " +
                          $"froze {watch.Elapsed.TotalMilliseconds:0}ms");
             Finished?.Invoke();

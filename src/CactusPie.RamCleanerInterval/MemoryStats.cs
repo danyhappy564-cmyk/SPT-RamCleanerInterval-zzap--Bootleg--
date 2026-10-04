@@ -225,11 +225,11 @@ namespace CactusPie.RamCleanerInterval
             switch (mode)
             {
                 case GarbageCollector.Mode.Disabled:
-                    return "꺼짐";
+                    return Loc.L("꺼짐", "off");
                 case GarbageCollector.Mode.Enabled:
-                    return "켜짐(자동)";
+                    return Loc.L("켜짐(자동)", "on (automatic)");
                 case GarbageCollector.Mode.Manual:
-                    return "수동";
+                    return Loc.L("수동", "manual");
                 default:
                     return mode.ToString();
             }

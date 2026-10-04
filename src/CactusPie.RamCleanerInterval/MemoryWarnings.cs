@@ -19,7 +19,9 @@ namespace CactusPie.RamCleanerInterval
         private float _vramFullSince = -1f;
         private bool _vramWarnedThisRaid;
 
-        public string LastText { get; private set; } = "없음";
+        private string _lastText;
+
+        public string LastText { get => _lastText ?? Loc.L("없음", "none"); private set => _lastText = value; }
 
         public void ResetRaid()
         {
@@ -37,8 +39,11 @@ namespace CactusPie.RamCleanerInterval
                     now - _lastCommitWarning >= CommitCooldownSeconds)
                 {
                     _lastCommitWarning = now;
-                    return Remember($"[경고] 메모리 한도 임박: 남은 커밋 {MemoryStats.Gb(s.CommitAvailable)}GB / 한도 {MemoryStats.Gb(s.CommitLimit)}GB " +
-                                    $"({freePercent:0}%). 한도를 넘으면 게임이 튕깁니다 — 페이지 파일을 늘리거나 이번 레이드를 마무리하세요.");
+                    return Remember(Loc.L(
+                        $"[경고] 메모리 한도 임박: 남은 커밋 {MemoryStats.Gb(s.CommitAvailable)}GB / 한도 {MemoryStats.Gb(s.CommitLimit)}GB " +
+                        $"({freePercent:0}%). 한도를 넘으면 게임이 튕깁니다 — 페이지 파일을 늘리거나 이번 레이드를 마무리하세요.",
+                        $"[Warning] Memory limit close: {MemoryStats.Gb(s.CommitAvailable)} GB commit left of {MemoryStats.Gb(s.CommitLimit)} GB " +
+                        $"({freePercent:0}%). Past the limit the game crashes — enlarge the page file or wrap up this raid."));
                 }
             }
 
@@ -66,8 +71,11 @@ namespace CactusPie.RamCleanerInterval
             }
 
             _vramWarnedThisRaid = true;
-            return Remember($"[경고] VRAM 포화: {MemoryStats.Gb(vramDedicated)} / {vramTotal / MemoryStats.BytesPerGb:0.0}GB ({vramUsed:0}%) 상태가 " +
-                            $"{vramSeconds}초 넘게 계속됨. 넘친 텍스처는 시스템 메모리로 가서 끊김 원인이 될 수 있습니다 — 텍스처 품질을 한 단계 낮춰 보세요.");
+            return Remember(Loc.L(
+                $"[경고] VRAM 포화: {MemoryStats.Gb(vramDedicated)} / {vramTotal / MemoryStats.BytesPerGb:0.0}GB ({vramUsed:0}%) 상태가 " +
+                $"{vramSeconds}초 넘게 계속됨. 넘친 텍스처는 시스템 메모리로 가서 끊김 원인이 될 수 있습니다 — 텍스처 품질을 한 단계 낮춰 보세요.",
+                $"[Warning] VRAM full: {MemoryStats.Gb(vramDedicated)} / {vramTotal / MemoryStats.BytesPerGb:0.0} GB ({vramUsed:0}%) for more than " +
+                $"{vramSeconds} s. Textures that don't fit spill into system memory and can cause stutter — try one step lower texture quality."));
         }
 
         private string Remember(string text)

@@ -71,7 +71,9 @@ namespace CactusPie.RamCleanerInterval
         /// <summary>Set every second: enabled and in a raid past its loading phase.</summary>
         public volatile bool Active;
 
-        public string Status { get; private set; } = "꺼짐";
+        private string _status;
+
+        public string Status { get => _status ?? Loc.L("꺼짐", "off"); private set => _status = value; }
 
         public int Loads { get; private set; }
 
@@ -93,7 +95,7 @@ namespace CactusPie.RamCleanerInterval
                     });
                 if (target == null)
                 {
-                    Status = "설치 실패: 게임의 번들 로드 함수를 못 찾음";
+                    Status = Loc.L("설치 실패: 게임의 번들 로드 함수를 못 찾음", "install failed: the game's bundle loading function was not found");
                     return;
                 }
 
@@ -101,12 +103,12 @@ namespace CactusPie.RamCleanerInterval
                 harmony.Patch(target,
                     prefix: new HarmonyMethod(AccessTools.Method(typeof(HeavyItemTracker), nameof(Prefix))),
                     postfix: new HarmonyMethod(AccessTools.Method(typeof(HeavyItemTracker), nameof(Postfix))));
-                Status = "설치됨 — 레이드 중 봇 장비 로드를 측정";
+                Status = Loc.L("설치됨 — 레이드 중 봇 장비 로드를 측정", "installed — measuring bot gear loads in raid");
                 _log.LogInfo("[heavy items] experimental bundle-load measurement installed");
             }
             catch (Exception ex)
             {
-                Status = "설치 실패: " + ex.Message;
+                Status = Loc.L("설치 실패: ", "install failed: ") + ex.Message;
                 _log.LogWarning($"[heavy items] install failed: {ex}");
             }
         }
@@ -251,7 +253,7 @@ namespace CactusPie.RamCleanerInterval
                 _bundleMods = LoadBundleMods();
             }
 
-            return _bundleMods.TryGetValue(path, out string mod) ? mod : "게임 기본";
+            return _bundleMods.TryGetValue(path, out string mod) ? mod : Loc.L("게임 기본", "base game");
         }
 
         private Dictionary<string, string> LoadBundleMods()

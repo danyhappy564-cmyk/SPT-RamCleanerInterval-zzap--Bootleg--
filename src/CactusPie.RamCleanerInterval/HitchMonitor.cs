@@ -29,11 +29,12 @@ namespace CactusPie.RamCleanerInterval
         private double _prevServerMs;
         private string _prevServerPath;
 
-        public const string CauseRamCleaner = "RAM 클리너 (GC 등)";
-        public const string CauseSpawn = "봇 스폰";
-        public const string CauseGcIndirect = "GC 진행 중 (간접)";
-        public const string CauseGame = "게임 자체 / 측정 밖";
-        public const string CauseServerPrefix = "서버 응답 대기";
+        // Cause names are shown as-is (and used as keys), so they follow the language setting.
+        public static string CauseRamCleaner => Loc.L("RAM 클리너 (GC 등)", "RAM cleaner (GC etc.)");
+        public static string CauseSpawn => Loc.L("봇 스폰", "bot spawn");
+        public static string CauseGcIndirect => Loc.L("GC 진행 중 (간접)", "GC in progress (indirect)");
+        public static string CauseGame => Loc.L("게임 자체 / 측정 밖", "the game itself / unmeasured");
+        public static string CauseServerPrefix => Loc.L("서버 응답 대기", "waiting on server");
 
         private sealed class CauseStats
         {
@@ -62,7 +63,9 @@ namespace CactusPie.RamCleanerInterval
 
         public string MaxWhat { get; private set; } = "-";
 
-        public string LastText { get; private set; } = "아직 없음";
+        private string _lastText;
+
+        public string LastText { get => _lastText ?? Loc.L("아직 없음", "none yet"); private set => _lastText = value; }
 
         /// <summary>A cause (mod, spawn, RAM cleaner) behind >= 30% of this raid's long frames and >= 3 of them; null otherwise.</summary>
         public string Suspect { get; private set; }
@@ -84,7 +87,7 @@ namespace CactusPie.RamCleanerInterval
             Ours = 0;
             MaxMs = 0f;
             MaxWhat = "-";
-            LastText = "아직 없음";
+            LastText = null;
             _suppressed = 0;
             _causes.Clear();
             Suspect = null;
@@ -212,7 +215,8 @@ namespace CactusPie.RamCleanerInterval
             }
 
             float now = Time.realtimeSinceStartup;
-            LastText = $"{System.DateTime.Now:HH:mm:ss} {frameMs:0}ms — 원인: {cause}" + (didSomething ? $" (이 모드 작업: {ours})" : string.Empty);
+            LastText = $"{System.DateTime.Now:HH:mm:ss} {frameMs:0}ms — " + Loc.L("원인: ", "cause: ") + cause +
+                       (didSomething ? Loc.L($" (이 모드 작업: {ours})", $" (this mod's work: {ours})") : string.Empty);
 
             // Rate limit: a stutter storm (loading, alt-tab) must not flood the log.
             if (now - _lastLogTime < MinLogGapSeconds)
@@ -260,8 +264,12 @@ namespace CactusPie.RamCleanerInterval
                 .FirstOrDefault();
             if (top.Key != null && top.Value.Count >= 3 && top.Value.Count >= total * 0.3f)
             {
-                Suspect = $"{top.Key} — 끊김 {total}회 중 {top.Value.Count}회의 원인 (최대 {top.Value.MaxMs:0}ms)" +
-                          (top.Key == CauseGcIndirect ? " · 자동 GC를 오래 미룰수록 한 번이 커져서 길어짐(04. GC 최대 대기를 줄여 보세요)" : string.Empty);
+                Suspect = Loc.L($"{top.Key} — 끊김 {total}회 중 {top.Value.Count}회의 원인 (최대 {top.Value.MaxMs:0}ms)",
+                                $"{top.Key} — cause of {top.Value.Count} of {total} stutters (worst {top.Value.MaxMs:0} ms)") +
+                          (top.Key == CauseGcIndirect
+                              ? Loc.L(" · 자동 GC를 오래 미룰수록 한 번이 커져서 길어짐(04. GC 최대 대기를 줄여 보세요)",
+                                      " · the longer automatic GC waits, the bigger each run gets (try a lower '04. GC maximum wait')")
+                              : string.Empty);
             }
         }
 
@@ -275,17 +283,17 @@ namespace CactusPie.RamCleanerInterval
 
             if (_prevLeakMs > 1.0)
             {
-                sb.Append($"누수 추적 {_prevLeakMs:0}ms ");
+                sb.Append(Loc.L($"누수 추적 {_prevLeakMs:0}ms ", $"leak count {_prevLeakMs:0} ms "));
             }
 
             if (_prevAssetUnload)
             {
-                sb.Append("에셋 정리 중 ");
+                sb.Append(Loc.L("에셋 정리 중 ", "asset cleanup running "));
             }
 
             if (_prevTrimRunning)
             {
-                sb.Append("워킹셋 정리 중(별도 스레드) ");
+                sb.Append(Loc.L("워킹셋 정리 중(별도 스레드) ", "working set trim running (own thread) "));
             }
 
             isOurs = sb.Length > 0;

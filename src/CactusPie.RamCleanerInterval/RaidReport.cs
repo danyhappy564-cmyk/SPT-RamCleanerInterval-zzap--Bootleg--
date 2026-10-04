@@ -36,7 +36,10 @@ namespace CactusPie.RamCleanerInterval
 
         public int Warnings { get; private set; }
 
-        public string LastSummaryKorean { get; private set; } = "아직 없음";
+        private string _lastSummary;
+
+        /// <summary>Last raid summary in the current language (name kept from when it was Korean only).</summary>
+        public string LastSummaryKorean { get => _lastSummary ?? Loc.L("아직 없음", "none yet"); private set => _lastSummary = value; }
 
         /// <summary>Length of the last finished raid, minutes.</summary>
         public double LastMinutes { get; private set; }
@@ -146,7 +149,7 @@ namespace CactusPie.RamCleanerInterval
             string perDeath = deaths >= 3 && _nativeAtStart >= 0
                 ? $"{(_nativeAtEnd - _nativeAtStart) / (1024d * 1024d) / deaths:0} MB"
                 : "n/a";
-            string perDeathKo = perDeath == "n/a" ? "표본 부족" : perDeath;
+            string perDeathKo = perDeath == "n/a" ? Loc.L("표본 부족", "too few deaths") : perDeath;
             string commit = _minCommitAvailable == long.MaxValue ? "?" : MemoryStats.Gb(_minCommitAvailable);
 
             logLine = $"[raid report] {minutes:0} min, deaths {deaths}, per death {perDeath} | " +
@@ -158,13 +161,14 @@ namespace CactusPie.RamCleanerInterval
                       $"fps avg {avgFps:0}, 1% low {lowFps:0}" + (suspect != null ? $" | suspect mod: {suspect}" : string.Empty);
 
             var sb = new StringBuilder();
-            sb.Append($"RAM 클리너 레이드 결산 ({minutes:0}분, 사망 {deaths}명)\n");
-            sb.Append($"최고 메모리 {MemoryStats.Gb(_peakPrivate)}GB · 사망 1명당 {perDeathKo}\n");
-            sb.Append($"FPS 평균 {avgFps:0} · 1% 저점 {lowFps:0} · 끊김 {hitches.Count}회(이 모드 {hitches.Ours}회, 최대 {hitches.MaxMs:0}ms)\n");
-            sb.Append($"GC {GcCount}회 {MemoryStats.Gb(GcReclaimed)}GB 회수");
+            sb.Append(Loc.L($"RAM 클리너 레이드 결산 ({minutes:0}분, 사망 {deaths}명)\n", $"RAM Cleaner raid report ({minutes:0} min, {deaths} deaths)\n"));
+            sb.Append(Loc.L($"최고 메모리 {MemoryStats.Gb(_peakPrivate)}GB · 사망 1명당 {perDeathKo}\n", $"peak memory {MemoryStats.Gb(_peakPrivate)} GB · per death {perDeathKo}\n"));
+            sb.Append(Loc.L($"FPS 평균 {avgFps:0} · 1% 저점 {lowFps:0} · 끊김 {hitches.Count}회(이 모드 {hitches.Ours}회, 최대 {hitches.MaxMs:0}ms)\n",
+                            $"FPS avg {avgFps:0} · 1% low {lowFps:0} · stutters {hitches.Count} (this mod {hitches.Ours}, worst {hitches.MaxMs:0} ms)\n"));
+            sb.Append(Loc.L($"GC {GcCount}회 {MemoryStats.Gb(GcReclaimed)}GB 회수", $"GC {GcCount}x, {MemoryStats.Gb(GcReclaimed)} GB freed"));
             if (suspect != null)
             {
-                sb.Append($"\n의심 모드: {suspect}");
+                sb.Append(Loc.L($"\n의심 모드: {suspect}", $"\nsuspect mod: {suspect}"));
             }
             notification = sb.ToString();
             LastSummaryKorean = $"{DateTime.Now:HH:mm} — " + notification.Replace("\n", " / ");

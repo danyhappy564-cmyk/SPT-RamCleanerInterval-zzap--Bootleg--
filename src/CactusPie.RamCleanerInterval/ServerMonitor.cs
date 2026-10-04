@@ -79,7 +79,9 @@ namespace CactusPie.RamCleanerInterval
 
         public bool Found => _pid > 0;
 
-        public string PatchStatus { get; private set; } = "아직 설치 안 함 (메인 메뉴에서 설치)";
+        private string _patchStatus;
+
+        public string PatchStatus { get => _patchStatus ?? Loc.L("아직 설치 안 함 (메인 메뉴에서 설치)", "not installed yet (installs in the main menu)"); private set => _patchStatus = value; }
 
         // ---------------------------------------------------------------- process memory
 
@@ -225,6 +227,7 @@ namespace CactusPie.RamCleanerInterval
             _installed = true;
             var harmony = new Harmony("com.cactuspie.ramcleanerinterval.server");
             var parts = new List<string>();
+            bool botsHooked = false;
 
             try
             {
@@ -234,7 +237,8 @@ namespace CactusPie.RamCleanerInterval
                     harmony.Patch(loadBots,
                         prefix: new HarmonyMethod(AccessTools.Method(typeof(ServerMonitor), nameof(StampPrefix))),
                         postfix: new HarmonyMethod(AccessTools.Method(typeof(ServerMonitor), nameof(LoadBotsPostfix))));
-                    parts.Add("봇 생성 응답");
+                    botsHooked = true;
+                    parts.Add(Loc.L("봇 생성 응답", "bot generation response"));
                 }
             }
             catch (Exception ex)
@@ -270,11 +274,11 @@ namespace CactusPie.RamCleanerInterval
 
             if (sync > 0)
             {
-                parts.Add($"모드의 동기 요청 {sync}종");
+                parts.Add(Loc.L($"모드의 동기 요청 {sync}종", $"{sync} kinds of synchronous mod requests"));
             }
 
-            PatchStatus = parts.Count > 0 ? "설치됨: " + string.Join(", ", parts) : "설치 실패 (대상 없음)";
-            _log.LogInfo($"[server] request watch installed: bot generation {(parts.Contains("봇 생성 응답") ? "yes" : "no")}, synchronous RequestHandler calls {sync}");
+            PatchStatus = parts.Count > 0 ? Loc.L("설치됨: ", "installed: ") + string.Join(", ", parts) : Loc.L("설치 실패 (대상 없음)", "install failed (nothing to hook)");
+            _log.LogInfo($"[server] request watch installed: bot generation {(botsHooked ? "yes" : "no")}, synchronous RequestHandler calls {sync}");
         }
 
         private static void StampPrefix(out long __state)
@@ -446,8 +450,10 @@ namespace CactusPie.RamCleanerInterval
                     return null;
                 }
 
-                return $"봇 생성 응답: 평균 {(_botCalls > 0 ? _botTotalMs / _botCalls : 0):0}ms · 최대 {_botMaxMs:0}ms · 마지막 {Math.Max(0, _botLastMs):0}ms " +
-                       $"({_botCalls}회, 봇 {_botCount}명" + (_botFailures > 0 ? $", 실패 {_botFailures}" : string.Empty) + ")";
+                double avg = _botCalls > 0 ? _botTotalMs / _botCalls : 0;
+                return Loc.L($"봇 생성 응답: 평균 {avg:0}ms · 최대 {_botMaxMs:0}ms · 마지막 {Math.Max(0, _botLastMs):0}ms ({_botCalls}회, 봇 {_botCount}명",
+                             $"bot generation: avg {avg:0} ms · max {_botMaxMs:0} ms · last {Math.Max(0, _botLastMs):0} ms ({_botCalls} requests, {_botCount} bots") +
+                       (_botFailures > 0 ? Loc.L($", 실패 {_botFailures}", $", {_botFailures} failed") : string.Empty) + ")";
             }
         }
 
@@ -459,8 +465,9 @@ namespace CactusPie.RamCleanerInterval
                 return null;
             }
 
-            string top = string.Join(", ", _waitPaths.OrderByDescending(kv => kv.Value).Take(3).Select(kv => $"{kv.Key} {kv.Value}회"));
-            return $"서버 응답 대기로 멈춤: {_waitCount}회, 최대 {_waitMaxMs:0}ms ({_waitMaxPath}) · {top}";
+            string top = string.Join(", ", _waitPaths.OrderByDescending(kv => kv.Value).Take(3).Select(kv => kv.Key + " " + kv.Value + Loc.L("회", "x")));
+            return Loc.L($"서버 응답 대기로 멈춤: {_waitCount}회, 최대 {_waitMaxMs:0}ms ({_waitMaxPath}) · {top}",
+                         $"froze waiting on the server: {_waitCount}x, worst {_waitMaxMs:0} ms ({_waitMaxPath}) · {top}");
         }
 
         public string DescribeForLog()

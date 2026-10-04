@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using BepInEx.Configuration;
 
 namespace CactusPie.RamCleanerInterval
@@ -8,6 +9,7 @@ namespace CactusPie.RamCleanerInterval
         // Config keys stay English so the .cfg file is stable; everything the player sees in F12
         // (category, name, description) is Korean through ConfigurationManagerAttributes.
         // Section keys are never renamed (that would reset people's values) - only the categories are.
+        private const string ModeSection = "0. Mode";
         private const string GcSection = "1. Auto GC";
         private const string TrimSection = "2. Working set";
         private const string GeneralSection = "3. General";
@@ -30,6 +32,7 @@ namespace CactusPie.RamCleanerInterval
         // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
         private const int CurrentConfigVersion = 280;
 
+        private const string ModeCategory = "00. 모드 · 언어";
         private const string GcCategory = "01. 자동 메모리 정리 (GC) — 추천";
         private const string TrimCategory = "02. 워킹셋 정리 (원본 RAM 클리너 방식)";
         private const string AssetCategory = "03. 에셋·VRAM 정리 (SPTVRAMCleaner 개선판)";
@@ -47,6 +50,29 @@ namespace CactusPie.RamCleanerInterval
         private const string ForecastCategory = "15. 메모리 예측 (남은 시간·재시작 권장)";
         private const string SessionReportCategory = "16. 세션 보고서 (그래프 페이지)";
         private const string HeavyItemsCategory = "17. [실험] 무거운 모드 아이템 찾기";
+
+        // Mode / language. Values are stored in the .cfg, so they are fixed bilingual labels.
+        private const string LanguageKorean = "한국어";
+        private const string LanguageEnglish = "English";
+        private const string PresetCustom = "직접 설정 · Custom";
+        private const string PresetAuto = "자동 정리 · Auto cleanup";
+        private const string PresetQuick = "간단 확인 · Quick view";
+        private const string PresetDeep = "집중 분석 · Deep analysis";
+
+        private ConfigEntry<string> _language;
+        private ConfigEntry<string> _preset;
+
+        /// <summary>Every F12 entry with its Korean texts, so the language switch can rewrite what F12 shows.</summary>
+        private readonly List<LocalizedEntry> _localized = new List<LocalizedEntry>();
+
+        private sealed class LocalizedEntry
+        {
+            public ConfigurationManagerAttributes Attributes;
+            public string Key;
+            public string CategoryKo;
+            public string NameKo;
+            public string DescriptionKo;
+        }
 
         private ConfigEntry<bool> _gcEnabled;
         private ConfigEntry<float> _gcGrowthGb;
@@ -134,6 +160,7 @@ namespace CactusPie.RamCleanerInterval
 
         private void BindSettings()
         {
+            BindModeSettings();
             BindGcSettings();
             BindTrimSettings();
             BindAssetSettings();
@@ -150,6 +177,99 @@ namespace CactusPie.RamCleanerInterval
             BindSessionReportSettings();
             BindHeavyItemSettings();
             MigrateSettings();
+            ApplyLanguage();
+            _language.SettingChanged += (_, __) => ApplyLanguage();
+            _preset.SettingChanged += (_, __) => ApplyPreset(_preset.Value);
+        }
+
+        private void BindModeSettings()
+        {
+            _language = Bind(ModeSection, ModeCategory, "Language", "언어 (Language)", LanguageKorean,
+                "F12, 왼쪽 위 화면 표시, 세션 보고서의 언어입니다. F12는 창을 닫았다 다시 열면 바뀐 언어로 보입니다.",
+                new AcceptableValueList<string>(LanguageKorean, LanguageEnglish), 100);
+
+            _preset = Bind(ModeSection, ModeCategory, "Preset", "모드", PresetCustom,
+                "고르면 아래 설정들을 한 번에 바꿉니다(그 뒤 개별 설정은 자유롭게 바꿔도 됩니다).\n" +
+                "• 자동 정리 — 메모리 정리만. 화면 표시 없음, 로그 거의 안 남김. 일반 게임·레이드용, 부담 가장 적음.\n" +
+                "• 간단 확인 — 자동 정리 + 왼쪽 위 화면 표시(메모리·FPS·서버·여유 예상), 끊김 횟수, 레이드 결산, 세션 보고서. 아주 가벼움.\n" +
+                "• 집중 분석 — 전부 켬: 모드별 부하 상시 측정, 끊김 원인 모드 추적, 원인 추적 로그, [실험] 무거운 아이템 찾기. " +
+                "프레임당 0.1~0.5ms 정도 더 들고 로그가 많이 쌓이니 문제를 찾는 동안만 쓰고 돌아오세요.\n" +
+                "• 직접 설정 — 지금 설정을 그대로 둡니다.\n" +
+                "참고: 집중 분석에서 다른 모드로 바꿀 때 '모드별 부하 분석'의 측정 장치는 게임을 다시 켜야 완전히 빠집니다(그 전까지는 측정만 멈춤).",
+                new AcceptableValueList<string>(PresetCustom, PresetAuto, PresetQuick, PresetDeep), 99);
+        }
+
+        /// <summary>Rewrites what F12 shows (category, name, description) for the chosen language. F12 picks it up when reopened.</summary>
+        private void ApplyLanguage()
+        {
+            Loc.En = _language.Value == LanguageEnglish;
+            foreach (LocalizedEntry entry in _localized)
+            {
+                Loc.Settings.TryGetValue(entry.Key, out string[] english);
+                entry.Attributes.Category = Loc.En && Loc.Categories.TryGetValue(entry.CategoryKo, out string category) ? category : entry.CategoryKo;
+                entry.Attributes.DispName = Loc.En && english != null ? english[0] : entry.NameKo;
+                entry.Attributes.Description = Loc.En && english != null ? english[1] : entry.DescriptionKo;
+            }
+        }
+
+        /// <summary>
+        /// Sets the switches for one of the three modes. Cleaning itself (01-04, after-raid cleanup) and the safety
+        /// warnings stay on in every mode; what changes is how much is measured, shown and logged.
+        /// </summary>
+        private void ApplyPreset(string preset)
+        {
+            bool auto = preset == PresetAuto;
+            bool quick = preset == PresetQuick;
+            bool deep = preset == PresetDeep;
+            if (!auto && !quick && !deep)
+            {
+                return;
+            }
+
+            bool view = quick || deep;
+
+            // Cleaning + safety: the same in every mode.
+            _gcEnabled.Value = true;
+            _postRaidCleanup.Value = true;
+            _waitForQuiet.Value = true;
+            _unloadAtStart.Value = false;
+            _unloadAuto.Value = false;
+            _warnEnabled.Value = true;
+            _warnNotify.Value = true;
+            _forecastEnabled.Value = true;
+            _forecastNotify.Value = true;
+            _restartNotify.Value = true;
+            _leakEnabled.Value = false;
+            _objectsEnabled.Value = false;
+            _diagHeavy.Value = false;
+
+            // What is measured, shown and logged.
+            _showOverlay.Value = view;
+            _overlayFps.Value = true;
+            _overlayServer.Value = true;
+            _overlayForecast.Value = true;
+            _overlayHitch.Value = true;
+            _overlayMem.Value = true;
+            _overlayMods.Value = deep;
+            _hitchEnabled.Value = view;
+            _hitchNotify.Value = view;
+            _hitchModTracking.Value = deep;
+            _reportEnabled.Value = view;
+            _reportNotify.Value = view;
+            _fpsHistoryEnabled.Value = view;
+            _fpsNotify.Value = view;
+            _memSuspectEnabled.Value = view;
+            _memSuspectNotify.Value = view;
+            _serverEnabled.Value = view;
+            _sessionReportEnabled.Value = view;
+            _profilerEnabled.Value = deep;
+            _profilerContinuous.Value = deep;
+            _heavyEnabled.Value = deep;
+            _overlayHeavy.Value = true;
+            _logIntervalSec.Value = auto ? 0 : quick ? 120 : 30;
+            _diagMode.Value = deep;
+
+            Logger.LogInfo($"Mode applied: {preset}");
         }
 
         private void MigrateSettings()
@@ -598,6 +718,14 @@ namespace CactusPie.RamCleanerInterval
                 DispName = displayName,
                 Order = order,
             };
+            _localized.Add(new LocalizedEntry
+            {
+                Attributes = attributes,
+                Key = section + "|" + key,
+                CategoryKo = category,
+                NameKo = displayName,
+                DescriptionKo = description,
+            });
 
             if (drawer != null)
             {

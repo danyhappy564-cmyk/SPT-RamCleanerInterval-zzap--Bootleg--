@@ -27,7 +27,9 @@ namespace CactusPie.RamCleanerInterval
             _path = Path.Combine(BepInEx.Paths.ConfigPath, "RamCleaner.performance.txt");
         }
 
-        public string LastComparison { get; private set; } = "아직 없음";
+        private string _lastComparison;
+
+        public string LastComparison { get => _lastComparison ?? Loc.L("아직 없음", "none yet"); private set => _lastComparison = value; }
 
         private sealed class Record
         {
@@ -49,7 +51,7 @@ namespace CactusPie.RamCleanerInterval
             logLine = null;
             if (minutes < 3f || avgFps <= 0f)
             {
-                LastComparison = "레이드가 너무 짧아서(3분 미만) 비교 안 함";
+                LastComparison = Loc.L("레이드가 너무 짧아서(3분 미만) 비교 안 함", "raid too short (under 3 min), not compared");
                 return null;
             }
 
@@ -71,14 +73,16 @@ namespace CactusPie.RamCleanerInterval
 
             if (previous == null)
             {
-                LastComparison = $"{current.Map}: 첫 기록 (평균 {avgFps:0}fps, 1% 저점 {lowFps:0}fps) — 다음 판부터 비교";
+                LastComparison = Loc.L($"{current.Map}: 첫 기록 (평균 {avgFps:0}fps, 1% 저점 {lowFps:0}fps) — 다음 판부터 비교",
+                                       $"{current.Map}: first record (avg {avgFps:0} fps, 1% low {lowFps:0} fps) — compared from the next raid");
                 return null;
             }
 
             float change = (avgFps - previous.AvgFps) / previous.AvgFps * 100f;
             string changes = DescribeModChanges(previous.Mods, current.Mods, out int changedCount);
-            LastComparison = $"{current.Map}: 이전({previous.Date:MM-dd HH:mm}) {previous.AvgFps:0}fps → 이번 {avgFps:0}fps ({change:+0;-0}%)" +
-                             (changedCount > 0 ? $", 그 사이 바뀐 모드 {changedCount}개" : ", 모드 변화 없음");
+            LastComparison = Loc.L($"{current.Map}: 이전({previous.Date:MM-dd HH:mm}) {previous.AvgFps:0}fps → 이번 {avgFps:0}fps ({change:+0;-0}%)",
+                                   $"{current.Map}: previous ({previous.Date:MM-dd HH:mm}) {previous.AvgFps:0} fps → this {avgFps:0} fps ({change:+0;-0}%)") +
+                             (changedCount > 0 ? Loc.L($", 그 사이 바뀐 모드 {changedCount}개", $", {changedCount} mods changed in between") : Loc.L(", 모드 변화 없음", ", no mod changes"));
             logLine = $"[fps history] {current.Map}: previous raid {previous.Date:yyyy-MM-dd HH:mm} avg {previous.AvgFps:0} fps " +
                       $"(1% low {previous.LowFps:0}, deaths {previous.Deaths}) -> this raid {avgFps:0} fps (1% low {lowFps:0}, deaths {deaths}), " +
                       $"{change:+0;-0}% | mod changes: {(changedCount > 0 ? changes : "none")}";
@@ -89,9 +93,10 @@ namespace CactusPie.RamCleanerInterval
             }
 
             string because = changedCount > 0
-                ? $"그 사이 바뀐 모드: {changes}"
-                : "모드 변화는 없음 — 봇 수·맵 상황·그래픽 설정 차이일 수 있음";
-            return $"[경고] 프레임 저하: {current.Map} 평균 {previous.AvgFps:0} → {avgFps:0}fps ({change:0}%), 이전 같은 맵 레이드 대비. {because}";
+                ? Loc.L($"그 사이 바뀐 모드: {changes}", $"mods changed in between: {changes}")
+                : Loc.L("모드 변화는 없음 — 봇 수·맵 상황·그래픽 설정 차이일 수 있음", "no mod changes — could be bot count, map situation or graphics settings");
+            return Loc.L($"[경고] 프레임 저하: {current.Map} 평균 {previous.AvgFps:0} → {avgFps:0}fps ({change:0}%), 이전 같은 맵 레이드 대비. {because}",
+                         $"[Warning] FPS drop: {current.Map} avg {previous.AvgFps:0} → {avgFps:0} fps ({change:0}%) vs the previous raid on this map. {because}");
         }
 
         private static string DescribeModChanges(List<string> before, List<string> after, out int count)
@@ -109,13 +114,13 @@ namespace CactusPie.RamCleanerInterval
             {
                 if (!old.TryGetValue(kv.Key, out string was))
                 {
-                    parts.Add($"+{kv.Key}(추가)");
+                    parts.Add($"+{kv.Key}" + Loc.L("(추가)", " (added)"));
                 }
                 else if (was != kv.Value)
                 {
                     string oldVersion = was.Split('@')[0];
                     string newVersion = kv.Value.Split('@')[0];
-                    parts.Add(oldVersion != newVersion ? $"{kv.Key}({oldVersion}→{newVersion})" : $"{kv.Key}(파일 변경)");
+                    parts.Add(oldVersion != newVersion ? $"{kv.Key}({oldVersion}→{newVersion})" : $"{kv.Key}" + Loc.L("(파일 변경)", " (file changed)"));
                 }
             }
 
@@ -123,12 +128,12 @@ namespace CactusPie.RamCleanerInterval
             {
                 if (!now.ContainsKey(name))
                 {
-                    parts.Add($"-{name}(빠짐)");
+                    parts.Add($"-{name}" + Loc.L("(빠짐)", " (removed)"));
                 }
             }
 
             count = parts.Count;
-            return parts.Count <= 8 ? string.Join(", ", parts) : string.Join(", ", parts.Take(8)) + $" 외 {parts.Count - 8}개";
+            return parts.Count <= 8 ? string.Join(", ", parts) : string.Join(", ", parts.Take(8)) + Loc.L($" 외 {parts.Count - 8}개", $" and {parts.Count - 8} more");
         }
 
         private List<Record> Load()

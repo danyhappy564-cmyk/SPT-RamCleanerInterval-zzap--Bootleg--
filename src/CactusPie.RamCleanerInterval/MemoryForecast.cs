@@ -43,7 +43,7 @@ namespace CactusPie.RamCleanerInterval
         /// <summary>Minutes until the nearer limit, or NaN when memory is not shrinking / not enough data.</summary>
         public double MinutesLeft { get; private set; } = double.NaN;
 
-        /// <summary>"RAM" (physical) or "커밋" (crash limit) — which limit <see cref="MinutesLeft"/> refers to.</summary>
+        /// <summary>"RAM" (physical) or "commit" (crash limit) — which limit <see cref="MinutesLeft"/> refers to.</summary>
         public string Limit { get; private set; }
 
         public double DropMbPerMin { get; private set; } = double.NaN;
@@ -51,7 +51,9 @@ namespace CactusPie.RamCleanerInterval
         /// <summary>Lowest runway seen this raid, minutes (NaN if never computed).</summary>
         public double LowestMinutes { get; private set; } = double.NaN;
 
-        public string RestartText { get; private set; } = "판단 대기 (레이드가 끝나고 메뉴 정리 뒤에 계산)";
+        private string _restartText;
+
+        public string RestartText { get => _restartText ?? Loc.L("판단 대기 (레이드가 끝나고 메뉴 정리 뒤에 계산)", "waiting (worked out after a raid, once the menu cleanup is done)"); private set => _restartText = value; }
 
         /// <summary>Raids that still fit before a restart is advised; -1 unknown/not needed, 0 = restart now.</summary>
         public int RaidsLeft { get; private set; } = -1;
@@ -97,7 +99,7 @@ namespace CactusPie.RamCleanerInterval
 
             bool physFirst = physMinutes < commitMinutes;
             MinutesLeft = Math.Max(0, physFirst ? physMinutes : commitMinutes);
-            Limit = physFirst ? "RAM" : "커밋";
+            Limit = physFirst ? "RAM" : "commit";
             if (physFirst)
             {
                 DropMbPerMin = physDrop * 60.0 / Mb;
@@ -128,16 +130,18 @@ namespace CactusPie.RamCleanerInterval
             if (double.IsNaN(MinutesLeft))
             {
                 return _samples.Count > 0 && !double.IsNaN(DropMbPerMin) && DropMbPerMin <= 0
-                    ? "여유 예상: 줄어들지 않음"
+                    ? Loc.L("여유 예상: 줄어들지 않음", "time left: memory isn't shrinking")
                     : null;
             }
 
-            string time = MinutesLeft >= 600 ? "10시간 이상" : MinutesLeft >= 120 ? $"약 {MinutesLeft / 60:0.0}시간" : $"약 {MinutesLeft:0}분";
-            string what = Limit == "RAM" ? "RAM 부족(끊김 시작)" : "커밋 한도(튕김)";
+            string time = MinutesLeft >= 600 ? Loc.L("10시간 이상", "10+ hours")
+                : MinutesLeft >= 120 ? Loc.L($"약 {MinutesLeft / 60:0.0}시간", $"about {MinutesLeft / 60:0.0} h")
+                : Loc.L($"약 {MinutesLeft:0}분", $"about {MinutesLeft:0} min");
+            string what = Limit == "RAM" ? Loc.L("RAM 부족(끊김 시작)", "low RAM (stutter starts)") : Loc.L("커밋 한도(튕김)", "the commit limit (crash)");
             string deaths = perDeathMb > 1 && commitAvailable > commitFloor
-                ? $" · 봇 약 {(commitAvailable - commitFloor) / Mb / perDeathMb:0}명 더 죽으면 한도"
+                ? Loc.L($" · 봇 약 {(commitAvailable - commitFloor) / Mb / perDeathMb:0}명 더 죽으면 한도", $" · limit after about {(commitAvailable - commitFloor) / Mb / perDeathMb:0} more bot deaths")
                 : string.Empty;
-            return $"여유 예상: {time} 뒤 {what} (분당 -{DropMbPerMin:0}MB){deaths}";
+            return Loc.L($"여유 예상: {time} 뒤 {what} (분당 -{DropMbPerMin:0}MB){deaths}", $"time left: {time} until {what} (-{DropMbPerMin:0} MB/min){deaths}");
         }
 
         // ---------------------------------------------------------------- restart advice
@@ -166,14 +170,16 @@ namespace CactusPie.RamCleanerInterval
             if (headroom < need)
             {
                 RaidsLeft = 0;
-                RestartText = $"지금 재시작 권장 — 다음 레이드 중 메모리 한도에 닿을 수 있음 (레이드 중 늘어나는 양 {MemoryStats.Gb(need)}GB, 남은 여유 {MemoryStats.Gb(Math.Max(0, headroom))}GB)";
+                RestartText = Loc.L($"지금 재시작 권장 — 다음 레이드 중 메모리 한도에 닿을 수 있음 (레이드 중 늘어나는 양 {MemoryStats.Gb(need)}GB, 남은 여유 {MemoryStats.Gb(Math.Max(0, headroom))}GB)",
+                                    $"restart now — the next raid may hit the memory limit (in-raid growth {MemoryStats.Gb(need)} GB, headroom {MemoryStats.Gb(Math.Max(0, headroom))} GB)");
                 return RestartText;
             }
 
             if (_afterRaids.Count < 2)
             {
                 RaidsLeft = -1;
-                RestartText = $"판단 대기 (2판째부터 계산) · 지금 여유 {MemoryStats.Gb(headroom)}GB, 레이드 중 +{MemoryStats.Gb(need)}GB";
+                RestartText = Loc.L($"판단 대기 (2판째부터 계산) · 지금 여유 {MemoryStats.Gb(headroom)}GB, 레이드 중 +{MemoryStats.Gb(need)}GB",
+                                    $"waiting (worked out from the 2nd raid) · headroom now {MemoryStats.Gb(headroom)} GB, in-raid +{MemoryStats.Gb(need)} GB");
                 return null;
             }
 
@@ -181,15 +187,18 @@ namespace CactusPie.RamCleanerInterval
             if (perRaid < 200 * Mb)
             {
                 RaidsLeft = -1;
-                RestartText = $"재시작 필요 없음 (판마다 남는 양 {perRaid / Mb:+0;-0}MB, {_afterRaids.Count}판 기준)";
+                RestartText = Loc.L($"재시작 필요 없음 (판마다 남는 양 {perRaid / Mb:+0;-0}MB, {_afterRaids.Count}판 기준)",
+                                    $"no restart needed (left behind per raid {perRaid / Mb:+0;-0} MB, over {_afterRaids.Count} raids)");
                 return null;
             }
 
             // The next raid fits (headroom >= need); each raid after it starts perRaid lower.
             RaidsLeft = 1 + (int)((headroom - need) / perRaid);
             RestartText = RaidsLeft <= 1
-                ? $"다음 판까지 하고 재시작 권장 (판마다 +{MemoryStats.Gb(perRaid)}GB 남음, 여유 {MemoryStats.Gb(headroom)}GB, 레이드 중 +{MemoryStats.Gb(need)}GB)"
-                : $"약 {RaidsLeft}판 더 가능, 그 뒤 재시작 권장 (판마다 +{MemoryStats.Gb(perRaid)}GB 남음, 여유 {MemoryStats.Gb(headroom)}GB, 레이드 중 +{MemoryStats.Gb(need)}GB)";
+                ? Loc.L($"다음 판까지 하고 재시작 권장 (판마다 +{MemoryStats.Gb(perRaid)}GB 남음, 여유 {MemoryStats.Gb(headroom)}GB, 레이드 중 +{MemoryStats.Gb(need)}GB)",
+                        $"play the next raid, then restart (+{MemoryStats.Gb(perRaid)} GB left behind per raid, headroom {MemoryStats.Gb(headroom)} GB, in-raid +{MemoryStats.Gb(need)} GB)")
+                : Loc.L($"약 {RaidsLeft}판 더 가능, 그 뒤 재시작 권장 (판마다 +{MemoryStats.Gb(perRaid)}GB 남음, 여유 {MemoryStats.Gb(headroom)}GB, 레이드 중 +{MemoryStats.Gb(need)}GB)",
+                        $"about {RaidsLeft} more raids, then restart (+{MemoryStats.Gb(perRaid)} GB left behind per raid, headroom {MemoryStats.Gb(headroom)} GB, in-raid +{MemoryStats.Gb(need)} GB)");
             return RaidsLeft <= 1 ? RestartText : null;
         }
     }
