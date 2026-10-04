@@ -18,6 +18,15 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 변경 이력
 
+- 2026-10-04 21:25 (KST) — **v2.12.0 추가: SPT 런처 '모드 페이지' 목록에 등록 (서버 부품, 선택 설치)**
+  - zip에 작은 **서버 부품** `SPT_Runtime\user\mods\RamCleanerInterval.Server\` 추가. 깔면 SPT 런처(와 SPT 웹 패널)의 **모드 페이지** 목록에
+    **'RAM Cleaner (RamCleanerInterval)'** 가 뜨고, 누르면 `/ramcleaner/` 에서 게임 안 웹 페이지(실시간·보고서·설정·서버 최적화)를 그대로 보여 줍니다
+  - 서버가 게임의 `127.0.0.1:6977` 페이지를 받아 와서 보여 주는 방식이라 **게임이 켜져 있고 서버와 같은 PC일 때만** 내용이 나옵니다.
+    게임이 꺼져 있으면 "연결할 수 없습니다"를 띄우고 5초마다 다시 시도합니다. 포트·켜기·언어는 게임 쪽 설정 파일(`BepInEx\config`)을 읽어 맞춥니다
+  - 보기는 SPT 웹 패널 로그인 규칙을 따르고(이 PC에서는 기본으로 바로 열림), 바꾸기는 SPT 설정 편집기처럼 관리자만 됩니다
+  - 서버 부품을 안 깔아도 지금처럼 `http://127.0.0.1:6977/` 로 그대로 쓸 수 있습니다. 게임 쪽 페이지 주소는 모두 상대 경로로 바꿈(서버 경유 대비)
+  - 확인: 실제 ASP.NET 호스트(SPT 웹과 같은 컨트롤러 등록 방식) + Mono로 띄운 게임 쪽 페이지로 끝에서 끝까지 — 네 탭 이동·설정 변경·관리자 아님 거부·
+    헤더 없는 변경 거부·게임 꺼짐 안내. **실제 SPT 런처 목록 표시는 미확인**
 - 2026-10-04 20:35 (KST) — **v2.12.0 추가: 웹 페이지 '서버 최적화' 탭 (CompoundingPerf zzap 2.2.2 연동)**
   - CompoundingPerf(서버 최적화 모드, zzap 2.2.2)를 같이 쓰면 웹 페이지에 **'서버 최적화'** 탭(`/server`)이 생깁니다:
     서버 연결·서버 메모리·마지막 레이드 후 정리 결과, CompoundingPerf F12 항목 19개 전부. 바꾸면 CompoundingPerf가 0.8초 뒤 서버에 적용·저장
@@ -203,8 +212,9 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 설치
 
-1. `release\RamCleanerInterval-2.10.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면
-   `BepInEx\plugins\CactusPie.RamCleanerInterval\CactusPie.RamCleanerInterval.dll`로 들어갑니다.
+1. `release\RamCleanerInterval-2.12.0-SPT4.1.zip`을 SPT 폴더(`E:\SPT 4.1`)에 그대로 풀면 두 곳에 들어갑니다.
+   - `BepInEx\plugins\CactusPie.RamCleanerInterval\CactusPie.RamCleanerInterval.dll` — 본체 (게임)
+   - `SPT_Runtime\user\mods\RamCleanerInterval.Server\RamCleanerInterval.Server.dll` — **선택**: SPT 런처 '모드 페이지' 목록에 RAM Cleaner를 띄우는 서버 부품. 필요 없으면 지워도 됩니다
 2. **예전 버전 DLL이 `BepInEx\plugins\`에 있으면 지우세요.**
 3. **SPTVRAMCleaner를 쓰고 있었다면 빼세요.** 이 모드에 같은 기능(개선판)이 들어 있어서, 둘 다 있으면 레이드 시작 때 두 번 정리합니다.
 
@@ -433,6 +443,7 @@ SAIN이 쓰는 것입니다. 봇이 많을수록 봇 AI 모드 숫자가 커지�
 
 - 주소는 **`127.0.0.1`** 로 입력하세요(`localhost`는 안 열릴 수 있음).
 - 페이지 세 개: **실시간**(1초마다 갱신), **세션 보고서**(진행 중인 레이드 포함), **설정**(F12와 같은 항목, 바꾸면 바로 적용).
+- **SPT 런처에서 열기**: zip의 서버 부품을 깔면 런처 '모드 페이지' 목록에 'RAM Cleaner (RamCleanerInterval)'가 뜹니다(`/ramcleaner/`, 게임이 켜져 있고 같은 PC일 때).
 - **서버 최적화 탭**: 서버 모드 [CompoundingPerf (zzap 2.2.2 이상)](https://github.com/danyhappy564-cmyk/CompoundingPerf-zzap--Bootleg-)를 같이 쓰면 나타납니다.
   서버 상태와 CompoundingPerf 설정 전부를 보고 바꿀 수 있고(0.8초 뒤 서버 적용·저장), 언어도 RAM 클리너를 따라갑니다.
 - 게임이 레이드 로딩 등으로 멈춰 있으면 "게임이 응답하지 않습니다"가 잠깐 뜨고 저절로 다시 연결합니다.
@@ -499,7 +510,8 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 ## 직접 빌드
 
 - 루트의 `build.bat` 더블클릭 → Release 빌드, `E:\SPT 4.1\BepInEx\plugins\CactusPie.RamCleanerInterval\`로 자동 복사,
-  `release\RamCleanerInterval-2.10.0-SPT4.1.zip` 생성.
+  서버 부품은 `E:\SPT 4.1\SPT_Runtime\user\mods\RamCleanerInterval.Server\`로 복사, `release\RamCleanerInterval-2.12.0-SPT4.1.zip` 생성(두 곳 다 포함).
+- 서버 부품(`src\RamCleanerInterval.Server`)은 .NET 10 SDK가 필요합니다. 없으면 `-p:SkipServer=true`로 본체만 빌드.
 - SPT 경로가 다르면 `src\RamCleaner.local.props.example`을 `src\RamCleaner.local.props`로 복사해서 경로를 고치세요.
 - 필요한 것: .NET SDK 8 이상. 참조는 SPT 설치 폴더의 `EscapeFromTarkov_Data\Managed`와 `BepInEx\core`에서 가져옵니다
   (`spt-reflection`은 쓰지 않습니다. `0Harmony`는 BepInEx\core의 것을 참조하며, 모드별 부하 분석이 다른 모드 함수에 측정 장치를 붙일 때만 씁니다 — 게임 동작은 바꾸지 않습니다).
@@ -530,6 +542,7 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 | `MemoryForecast.cs` | 여유 예상(최근 10분 감소 속도), 재시작 판단(판마다 남는 양) |
 | `SessionReport.cs` | 세션 보고서 HTML (표·그래프, 인라인 CSS/JS) |
 | `WebServer.cs` | 웹 페이지 서버(`HttpListener`, 별도 스레드). 127.0.0.1만, 변경 요청은 전용 헤더가 있어야 받음 |
+| `..\RamCleanerInterval.Server\` | (선택) SPT 서버 부품: 런처 모드 페이지 등록(`IModBlazorMetadata`), `/ramcleaner/` → 게임의 `127.0.0.1:포트` 중계 |
 | `CustomRamCleanerIntervalPlugin.CompoundingPerf.cs` | 웹 페이지 '서버 최적화' 탭: CompoundingPerf 클라이언트 플러그인의 F12 항목·`StatusBridge`를 리플렉션으로 읽고 씀, 언어 맞추기 |
 | `CustomRamCleanerIntervalPlugin.Web.cs` | 웹 페이지 내용: 주소별 처리, 실시간 숫자(JSON), 설정 목록·변경, 수동 실행. 게임 상태는 메인 스레드에서 읽음 |
 | `Web/*.css, *.js` | 웹 페이지 모양·동작 (DLL 안에 들어감) |

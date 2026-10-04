@@ -157,7 +157,7 @@ namespace CactusPie.RamCleanerInterval
                 H(Loc.L("서버에서 다시 읽기", "Read again from the server")) + "</button></div></section>" +
                 "<div class=\"toolbar\"><input type=\"search\" id=\"q\" placeholder=\"" + H(Loc.L("설정 검색 (예: 정리, 압축, 로그)", "Search settings (e.g. cleanup, compression, log)")) +
                 "\" aria-label=\"" + H(Loc.L("설정 검색", "Search settings")) + "\"></div><p class=\"msg\" id=\"msg\" role=\"status\"></p><div id=\"list\"></div>";
-            return Shell(Loc.L("RAM 클리너 — 서버 최적화", "RAM Cleaner — server optimisation"), "server", content, SettingsStrings("/api/cp/settings", "/api/cp/status"), "settings.js");
+            return Shell(Loc.L("RAM 클리너 — 서버 최적화", "RAM Cleaner — server optimisation"), "server", content, SettingsStrings("api/cp/settings", "api/cp/status"), "settings.js");
         }
     }
 }

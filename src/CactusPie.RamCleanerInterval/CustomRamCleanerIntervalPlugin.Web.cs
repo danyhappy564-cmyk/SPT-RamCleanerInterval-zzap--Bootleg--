@@ -210,10 +210,10 @@ namespace CactusPie.RamCleanerInterval
             string Link(string href, string id, string text) =>
                 $"<a href=\"{href}\"" + (id == active ? " class=\"on\" aria-current=\"page\"" : string.Empty) + $">{text}</a>";
             return "<nav class=\"nav\"><span class=\"brand\">" + Loc.L("RAM 클리너", "RAM Cleaner") + "</span>" +
-                   Link("/", "live", Loc.L("실시간", "Live")) +
-                   Link("/report", "report", Loc.L("세션 보고서", "Session report")) +
-                   Link("/settings", "settings", Loc.L("설정", "Settings")) +
-                   (!(CompoundingPerfPlugin is null) ? Link("/server", "server", Loc.L("서버 최적화", "Server optimisation")) : string.Empty) +
+                   Link("./", "live", Loc.L("실시간", "Live")) +
+                   Link("report", "report", Loc.L("세션 보고서", "Session report")) +
+                   Link("settings", "settings", Loc.L("설정", "Settings")) +
+                   (!(CompoundingPerfPlugin is null) ? Link("server", "server", Loc.L("서버 최적화", "Server optimisation")) : string.Empty) +
                    "<button type=\"button\" id=\"lang\" class=\"lang\" data-to=\"" + (Loc.En ? LanguageKorean : LanguageEnglish) + "\">" +
                    (Loc.En ? "한국어" : "English") + "</button></nav>";
         }
@@ -305,7 +305,7 @@ namespace CactusPie.RamCleanerInterval
                         "The same settings as F12. Changes apply in the game at once and are saved (reopen the F12 window to see them there). Picking a 'mode' changes many settings at once.")) +
                 "</p><div class=\"toolbar\"><input type=\"search\" id=\"q\" placeholder=\"" + H(Loc.L("설정 검색 (예: 서버, 끊김, GC)", "Search settings (e.g. server, stutter, GC)")) +
                 "\" aria-label=\"" + H(Loc.L("설정 검색", "Search settings")) + "\"></div><p class=\"msg\" id=\"msg\" role=\"status\"></p><div id=\"list\"></div>";
-            return Shell(Loc.L("RAM 클리너 — 설정", "RAM Cleaner — settings"), "settings", content, SettingsStrings("/api/settings", null), "settings.js");
+            return Shell(Loc.L("RAM 클리너 — 설정", "RAM Cleaner — settings"), "settings", content, SettingsStrings("api/settings", null), "settings.js");
         }
 
         /// <summary>Texts and endpoints for settings.js (this plugin's settings, or CompoundingPerf's with a status endpoint).</summary>

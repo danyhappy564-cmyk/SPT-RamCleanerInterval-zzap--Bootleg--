@@ -3,7 +3,7 @@
   var T = window.RC || {};
   var $ = function (id) { return document.getElementById(id); };
   var esc = window.rcEsc;
-  var API = T.api || '/api/settings', STATUS = T.statusApi || '';
+  var API = T.api || 'api/settings', STATUS = T.statusApi || '';
   var LANGUAGE = '0. Mode|Language', CP_LANGUAGE = 'Language|Language', PRESET = '0. Mode|Preset', PORT = '18. Web page|Port', WEB = '18. Web page|Enabled';
 
   function control(it) {
@@ -51,7 +51,11 @@
       if (it.key === PRESET) { $('msg').textContent = T.presetApplied; load(); return; }
       if (it.key === PORT) {
         $('msg').textContent = T.moving.replace('{0}', r.v);
-        setTimeout(function () { location.href = location.protocol + '//' + location.hostname + ':' + r.v + '/settings'; }, 2500);
+        // Behind the SPT server's proxy the address stays the same (it reads the new port itself).
+        setTimeout(function () {
+          if (location.pathname.indexOf('/ramcleaner/') === 0) location.reload();
+          else location.href = location.protocol + '//' + location.hostname + ':' + r.v + '/settings';
+        }, 2500);
       }
       if (it.key === WEB && r.v === 'false') $('msg').textContent = T.webOff;
     }, function () { state.className = 'state err'; state.textContent = T.offline; });

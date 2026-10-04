@@ -47,7 +47,7 @@
   }
 
   function tick() {
-    fetch('/api/live', { cache: 'no-store' })
+    fetch('api/live', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(render, function () { $('sub').textContent = T.offline; })
       .then(function () { setTimeout(tick, document.hidden ? 5000 : 1000); });
@@ -56,7 +56,7 @@
   document.querySelectorAll('[data-act]').forEach(function (b) {
     b.addEventListener('click', function () {
       b.disabled = true;
-      window.rcPost('/api/action', { name: b.getAttribute('data-act') })
+      window.rcPost('api/action', { name: b.getAttribute('data-act') })
         .then(function (r) { $('actmsg').textContent = r.msg || r.error || ''; }, function () { $('actmsg').textContent = T.offline; })
         .then(function () { b.disabled = false; });
     });

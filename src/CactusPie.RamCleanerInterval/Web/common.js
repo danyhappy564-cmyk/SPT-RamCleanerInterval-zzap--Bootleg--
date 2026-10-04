@@ -1,4 +1,5 @@
-// Shared by every page: POST helper (the custom header is what lets the plugin accept the change) and the language button.
+// Shared by every page. URLs are relative, so the pages also work behind the SPT server's /ramcleaner/ proxy
+// (launcher mod page). POST helper (the custom header is what lets the plugin accept the change) and the language button.
 window.rcPost = function (url, fields) {
   var body = Object.keys(fields).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(fields[k]); }).join('&');
   return fetch(url, {
@@ -15,7 +16,7 @@ window.rcEsc = function (t) {
   if (!b) return;
   b.addEventListener('click', function () {
     b.disabled = true;
-    window.rcPost('/api/settings', { key: '0. Mode|Language', value: b.getAttribute('data-to') })
+    window.rcPost('api/settings', { key: '0. Mode|Language', value: b.getAttribute('data-to') })
       .then(function () { location.reload(); }, function () { b.disabled = false; });
   });
 })();

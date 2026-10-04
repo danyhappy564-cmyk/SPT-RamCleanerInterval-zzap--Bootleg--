@@ -78,15 +78,29 @@
     <Error Text="Set SptRoot to a valid SPT installation using -p:SptRoot=&quot;C:\Path\To\SPT&quot;, the SPT_ROOT environment variable, or src\RamCleaner.local.props." />
   </Target>
 
-  <Target Name="DeployToSpt" AfterTargets="Build" Condition="'$(DeployPlugin)' == 'true'">
+  <!-- Optional SPT server part (..\RamCleanerInterval.Server): lists the web page in the SPT launcher's mod pages.
+       Built with every Release build (needs the .NET 10 SDK); skip with -p:SkipServer=true. -->
+  <PropertyGroup>
+    <ServerProject>$(MSBuildThisFileDirectory)..\RamCleanerInterval.Server\RamCleanerInterval.Server.csproj</ServerProject>
+    <ServerDll>$(MSBuildThisFileDirectory)..\RamCleanerInterval.Server\bin\Release\RamCleanerInterval.Server.dll</ServerDll>
+    <ServerFolder>SPT_Runtime\user\mods\RamCleanerInterval.Server</ServerFolder>
+  </PropertyGroup>
+
+  <Target Name="BuildServerPart" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' AND '$(SkipServer)' != 'true'">
+    <MSBuild Projects="$(ServerProject)" Targets="Restore" Properties="Configuration=Release" />
+    <MSBuild Projects="$(ServerProject)" Targets="Build" Properties="Configuration=Release" />
+  </Target>
+
+  <Target Name="DeployToSpt" AfterTargets="Build" DependsOnTargets="BuildServerPart" Condition="'$(DeployPlugin)' == 'true'">
     <MakeDir Directories="$(SptRoot)\$(PluginFolder)" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SptRoot)\$(PluginFolder)" />
     <Message Text="Deployed $(TargetFileName) to $(SptRoot)\$(PluginFolder)" Importance="high" />
+    <Copy Condition="Exists('$(ServerDll)') AND '$(SkipServer)' != 'true'" SourceFiles="$(ServerDll)" DestinationFolder="$(SptRoot)\$(ServerFolder)" />
   </Target>
 
   <!-- Rule 2-2: every Release build also drops a ready-to-extract archive (unzip into the SPT folder)
        in the repository's release\ folder. Skip with -p:SkipPackage=true. -->
-  <Target Name="PackageRelease" AfterTargets="Build"
+  <Target Name="PackageRelease" AfterTargets="Build" DependsOnTargets="BuildServerPart"
           Condition="'$(Configuration)' == 'Release' AND '$(SkipPackage)' != 'true'">
     <PropertyGroup>
       <PackageStageDir>$(IntermediateOutputPath)package\</PackageStageDir>
@@ -95,6 +109,7 @@
     </PropertyGroup>
     <RemoveDir Directories="$(PackageStageDir)" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PackageStageDir)$(PluginFolder)" />
+    <Copy Condition="Exists('$(ServerDll)') AND '$(SkipServer)' != 'true'" SourceFiles="$(ServerDll)" DestinationFolder="$(PackageStageDir)$(ServerFolder)" />
     <MakeDir Directories="$(PackageZipDir)" />
     <Delete Files="$(PackageZipPath)" />
     <ZipDirectory SourceDirectory="$(PackageStageDir)" DestinationFile="$(PackageZipPath)" Overwrite="true" />

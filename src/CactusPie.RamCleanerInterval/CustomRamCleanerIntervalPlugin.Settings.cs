@@ -532,7 +532,8 @@ namespace CactusPie.RamCleanerInterval
             _webEnabled = Bind(WebSection, WebCategory, "Enabled", "웹 페이지 켜기", true,
                 "게임이 켜져 있는 동안 브라우저에서 http://127.0.0.1:6977/ 을 열면 실시간 현황(메모리·FPS·서버·여유 예상 그래프), " +
                 "진행 중인 레이드까지 들어간 세션 보고서, 이 설정 전체(바꾸면 바로 적용)를 볼 수 있습니다. " +
-                "'05. 공통'의 '웹 페이지 열기' 버튼으로도 열립니다. 이 PC에서만 열리고, 아무도 안 보고 있을 때는 거의 일을 하지 않습니다.",
+                "'05. 공통'의 '웹 페이지 열기' 버튼으로도 열립니다. 이 PC에서만 열리고, 아무도 안 보고 있을 때는 거의 일을 하지 않습니다.\n" +
+                "zip에 들어 있는 서버 부품(SPT_Runtime\\user\\mods\\RamCleanerInterval.Server)도 깔면 SPT 런처의 '모드 페이지' 목록에 'RAM Cleaner'로 뜹니다(서버와 게임이 같은 PC일 때).",
                 null, 10);
 
             _webPort = Bind(WebSection, WebCategory, "Port", "포트 번호", 6977,
