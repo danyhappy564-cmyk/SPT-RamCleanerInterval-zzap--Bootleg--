@@ -5,7 +5,7 @@
 
 **<한눈에 보기>**
 
-1. **웹 페이지** — 게임을 켜 둔 채 브라우저에서 `http://127.0.0.1:6977/` 을 열면 실시간 상태·그래프, 진행 중인 레이드까지 들어간 보고서, 모든 설정(바로 적용)을 볼 수 있습니다.
+1. **웹 페이지** — 게임을 켜 둔 채 브라우저에서 `http://127.0.0.1:6977/` 을 열면 실시간 상태·그래프, 진행 중인 레이드까지 들어간 보고서, 모든 설정(바로 적용)을 볼 수 있습니다. 서버 최적화 모드 CompoundingPerf(zzap)도 같이 쓰면 서버 설정까지 한 페이지에서 바꿉니다.
 2. **모드 3종** — '자동 정리'(가장 가벼움) / '간단 확인' / '집중 분석' 중 하나만 고르면 설정이 한 번에 맞춰집니다.
 3. **한국어 / English** — F12, 화면 표시, 알림, 보고서, 웹 페이지가 같이 바뀝니다.
 4. **미리 알려 주기** — SPT 서버 상태, 서버 때문에 생긴 끊김, 메모리가 바닥나기까지 남은 시간, 재시작해야 할 때.
@@ -14,7 +14,7 @@
 
 - **v2.10.0 이하에서 올라오는 경우:** `BepInEx\plugins\CactusPie.RamCleanerInterval\` 의 DLL을 덮어쓰면 됩니다. 기존 F12 설정은 그대로 유지되고, 00번과 14~18번 항목이 새로 생깁니다.
 - **처음 쓰거나 뭘 켜야 할지 모르겠으면:** F12 → `00. 모드 · 언어` → 모드를 **'자동 정리'** 로 고르세요.
-- 서버 모드는 필요 없습니다. 서버 쪽 최적화 모드(CompoundingPerf)와 같이 써도 되고 따로 써도 됩니다.
+- 서버 모드는 필요 없습니다. 서버 쪽 최적화 모드 **CompoundingPerf (zzap 2.2.2)** 와 같이 쓰면 웹 페이지에서 서버 설정까지 바꿀 수 있고, 따로 써도 됩니다.
 
 ---
 
@@ -28,6 +28,8 @@
 4. **설정** — F12의 모든 항목을 설명과 함께 보여 주고, 바꾸면 **게임에 바로 적용·저장**됩니다. 검색, '기본값으로' 버튼이 있습니다. 오른쪽 위 버튼으로 한국어/English 전환.
 5. 기본으로 **이 PC에서만** 열립니다(방화벽 창 안 뜸). 휴대폰으로 보고 싶으면 18번 '같은 네트워크의 다른 기기에서 접속 허용'을 켜세요(집 네트워크에서만).
 6. 아무도 안 보고 있을 때는 거의 일을 하지 않습니다. 페이지를 열어 두면 1초마다(탭을 숨기면 5초마다) 숫자를 받아 옵니다.
+7. **서버 최적화 탭** — 서버 쪽 최적화 모드 **CompoundingPerf (zzap 2.2.2)** 를 같이 깔면 '서버 최적화' 탭이 생깁니다. 서버 메모리·레이드 후 서버 정리 결과를 보고, CompoundingPerf 설정을 전부 바꿀 수 있습니다(서버 재시작 필요 없음). 언어도 RAM 클리너를 따라갑니다.
+   받는 곳: https://github.com/danyhappy564-cmyk/CompoundingPerf-zzap--Bootleg- (안 깔아도 RAM 클리너는 그대로 동작하고, 탭만 안 보입니다)
 
 - **모드 3종 (F12 → 00. 모드 · 언어 → 모드)**
 
@@ -95,7 +97,7 @@
 
 **At a glance**
 
-1. **Web page** — while the game runs, open `http://127.0.0.1:6977/` in your browser: live status and charts, a report that includes the raid in progress, and every setting (applied at once).
+1. **Web page** — while the game runs, open `http://127.0.0.1:6977/` in your browser: live status and charts, a report that includes the raid in progress, and every setting (applied at once). With the server optimisation mod CompoundingPerf (zzap) installed too, its server settings are on the same page.
 2. **Three modes** — pick "Auto cleanup" (lightest), "Quick view" or "Deep analysis" and the settings follow in one go.
 3. **Korean / English** — F12, the overlay, notifications, the report and the web page switch together.
 4. **Early warnings** — SPT server status, stutters caused by the server, time left before memory runs out, and when to restart.
@@ -104,7 +106,7 @@
 
 - **Coming from v2.10.0 or older:** overwrite the DLL in `BepInEx\plugins\CactusPie.RamCleanerInterval\`. Your F12 settings are kept; sections 00 and 14–18 are new.
 - **New, or not sure what to turn on:** F12 → `00. Mode · language` → set the mode to **"Auto cleanup"**.
-- No server mod needed. Works with or without the server-side optimisation mod (CompoundingPerf).
+- No server mod needed. With the server-side optimisation mod **CompoundingPerf (zzap 2.2.2)** you can also change server settings from the web page; without it everything else works the same.
 
 ---
 
@@ -118,6 +120,8 @@
 4. **Settings** — every F12 entry with its description; changes **apply in the game at once and are saved**. Search and "Reset" buttons. Korean/English switch at the top right.
 5. By default only **this PC** can open it (no firewall prompt). To use your phone, turn on "Allow other devices on the network" in section 18 (home network only).
 6. It does almost nothing while nobody is looking. With the page open it fetches numbers once a second (every 5 s while the tab is hidden).
+7. **Server optimisation tab** — install the server-side mod **CompoundingPerf (zzap 2.2.2)** as well and a "Server optimisation" tab appears: server memory, the post-raid server cleanup result, and every CompoundingPerf setting (no server restart needed). Its language follows RAM Cleaner's.
+   Get it here: https://github.com/danyhappy564-cmyk/CompoundingPerf-zzap--Bootleg- (RAM Cleaner works the same without it; only the tab is missing)
 
 - **Three modes (F12 → 00. Mode · language → Mode)**
 

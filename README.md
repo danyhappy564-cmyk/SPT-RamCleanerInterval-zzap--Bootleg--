@@ -18,6 +18,12 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 변경 이력
 
+- 2026-10-04 20:35 (KST) — **v2.12.0 추가: 웹 페이지 '서버 최적화' 탭 (CompoundingPerf zzap 2.2.2 연동)**
+  - CompoundingPerf(서버 최적화 모드, zzap 2.2.2)를 같이 쓰면 웹 페이지에 **'서버 최적화'** 탭(`/server`)이 생깁니다:
+    서버 연결·서버 메모리·마지막 레이드 후 정리 결과, CompoundingPerf F12 항목 19개 전부. 바꾸면 CompoundingPerf가 0.8초 뒤 서버에 적용·저장
+  - 언어: RAM 클리너 언어를 바꾸면 CompoundingPerf F12 언어도 같이 바뀝니다(CompoundingPerf 2.2.2에 한/영 추가)
+  - 두 모드는 서로를 참조하지 않습니다(설치 여부를 확인해서 탭을 보여 줌). 없으면 탭이 안 보이고, `/server`로 직접 열면 받는 곳 안내
+  - 확인: Mono에서 두 플러그인을 같이 올려 탭 API(목록·변경·범위 보정·상태·언어 따라가기)와 Chromium 렌더(어두움/폰) 확인. 실제 서버 왕복은 CompoundingPerf F12와 같은 경로
 - 2026-10-04 16:20 (KST) — **v2.12.0 추가: 웹 페이지 `http://127.0.0.1:6977/` (실시간 · 세션 보고서 · 설정) — 아직 배포 전이라 같은 버전에 합침**
   - 게임이 켜져 있는 동안 브라우저로 SPT 서버 페이지처럼 열 수 있습니다. F12 → 05번 **'웹 페이지 열기'** 버튼으로도 열림
   - **실시간:** 게임 메모리·시스템 여유·커밋 여유·FPS·끊김·VRAM·서버·여유 예상·재시작 판단 카드(위험하면 노랑/빨강),
@@ -427,6 +433,8 @@ SAIN이 쓰는 것입니다. 봇이 많을수록 봇 AI 모드 숫자가 커지�
 
 - 주소는 **`127.0.0.1`** 로 입력하세요(`localhost`는 안 열릴 수 있음).
 - 페이지 세 개: **실시간**(1초마다 갱신), **세션 보고서**(진행 중인 레이드 포함), **설정**(F12와 같은 항목, 바꾸면 바로 적용).
+- **서버 최적화 탭**: 서버 모드 [CompoundingPerf (zzap 2.2.2 이상)](https://github.com/danyhappy564-cmyk/CompoundingPerf-zzap--Bootleg-)를 같이 쓰면 나타납니다.
+  서버 상태와 CompoundingPerf 설정 전부를 보고 바꿀 수 있고(0.8초 뒤 서버 적용·저장), 언어도 RAM 클리너를 따라갑니다.
 - 게임이 레이드 로딩 등으로 멈춰 있으면 "게임이 응답하지 않습니다"가 잠깐 뜨고 저절로 다시 연결합니다.
 - 안 열리면 F12 '현재 상태'의 **'웹 페이지:'** 줄을 보세요(포트 사용 중이면 그렇게 나옴).
 
@@ -522,6 +530,7 @@ SAIN 시뮬 로그 5개(2026-09-29 ~ 10-01)로 확인한 내용입니다.
 | `MemoryForecast.cs` | 여유 예상(최근 10분 감소 속도), 재시작 판단(판마다 남는 양) |
 | `SessionReport.cs` | 세션 보고서 HTML (표·그래프, 인라인 CSS/JS) |
 | `WebServer.cs` | 웹 페이지 서버(`HttpListener`, 별도 스레드). 127.0.0.1만, 변경 요청은 전용 헤더가 있어야 받음 |
+| `CustomRamCleanerIntervalPlugin.CompoundingPerf.cs` | 웹 페이지 '서버 최적화' 탭: CompoundingPerf 클라이언트 플러그인의 F12 항목·`StatusBridge`를 리플렉션으로 읽고 씀, 언어 맞추기 |
 | `CustomRamCleanerIntervalPlugin.Web.cs` | 웹 페이지 내용: 주소별 처리, 실시간 숫자(JSON), 설정 목록·변경, 수동 실행. 게임 상태는 메인 스레드에서 읽음 |
 | `Web/*.css, *.js` | 웹 페이지 모양·동작 (DLL 안에 들어감) |
 | `HeavyItemTracker.cs` | [실험] 번들 첫 로드 메모리 → 모드·번들 순위 (`ObjectsFactory.LoadBundlesAndCreatePools`, SPT `BundleManager`) |

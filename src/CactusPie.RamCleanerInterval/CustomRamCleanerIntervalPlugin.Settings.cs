@@ -210,6 +210,7 @@ namespace CactusPie.RamCleanerInterval
         private void ApplyLanguage()
         {
             Loc.En = _language.Value == LanguageEnglish;
+            _cpLanguagePending = true; // CompoundingPerf follows (applied in the next once-a-second tick)
             foreach (LocalizedEntry entry in _localized)
             {
                 Loc.Settings.TryGetValue(entry.Key, out string[] english);

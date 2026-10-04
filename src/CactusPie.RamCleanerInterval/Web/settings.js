@@ -3,7 +3,8 @@
   var T = window.RC || {};
   var $ = function (id) { return document.getElementById(id); };
   var esc = window.rcEsc;
-  var LANGUAGE = '0. Mode|Language', PRESET = '0. Mode|Preset', PORT = '18. Web page|Port', WEB = '18. Web page|Enabled';
+  var API = T.api || '/api/settings', STATUS = T.statusApi || '';
+  var LANGUAGE = '0. Mode|Language', CP_LANGUAGE = 'Language|Language', PRESET = '0. Mode|Preset', PORT = '18. Web page|Port', WEB = '18. Web page|Enabled';
 
   function control(it) {
     if (it.type === 'bool') {
@@ -39,13 +40,14 @@
     var state = row.querySelector('.state');
     state.className = 'state';
     state.textContent = T.saving;
-    window.rcPost('/api/settings', { key: it.key, value: v }).then(function (r) {
+    window.rcPost(API, { key: it.key, value: v }).then(function (r) {
       if (!r.ok) { state.className = 'state err'; state.textContent = r.error || T.failed; setValue(row, it, it.v); return; }
       setValue(row, it, r.v);
       state.className = 'state ok';
       state.textContent = T.saved;
       setTimeout(function () { if (state.textContent === T.saved) state.textContent = ''; }, 2500);
-      if (it.key === LANGUAGE) { location.reload(); return; }
+      if (it.key === LANGUAGE || it.key === CP_LANGUAGE) { location.reload(); return; }
+      if (STATUS) { $('msg').textContent = T.cpSent; setTimeout(status, 1500); }
       if (it.key === PRESET) { $('msg').textContent = T.presetApplied; load(); return; }
       if (it.key === PORT) {
         $('msg').textContent = T.moving.replace('{0}', r.v);
@@ -104,8 +106,23 @@
   }
 
   function load() {
-    fetch('/api/settings', { cache: 'no-store' }).then(function (r) { return r.json(); })
+    fetch(API, { cache: 'no-store' }).then(function (r) { return r.json(); })
       .then(function (d) { if (d.error) { $('msg').textContent = d.error; return; } render(d); }, function () { $('msg').textContent = T.offline; });
+  }
+
+  // CompoundingPerf tab: server status from its plugin, refreshed every 3 s.
+  function status(refresh) {
+    var req = refresh ? window.rcPost(STATUS, {}) : fetch(STATUS, { cache: 'no-store' }).then(function (r) { return r.json(); });
+    return req.then(function (d) {
+      $('cpStatus').textContent = d.error || d.status;
+      $('cpLast').textContent = d.last || '';
+    }, function () { $('cpStatus').textContent = T.offline; });
+  }
+
+  if (STATUS && $('cpStatus')) {
+    $('cpRefresh').addEventListener('click', function () { status(true).then(function () { setTimeout(function () { status(); load(); }, 1500); }); });
+    status();
+    setInterval(function () { if (!document.hidden) status(); }, 3000);
   }
 
   $('q').addEventListener('input', filter);

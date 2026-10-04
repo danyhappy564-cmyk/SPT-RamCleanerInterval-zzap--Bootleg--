@@ -43,6 +43,7 @@ namespace CactusPie.RamCleanerInterval
         /// <summary>Once a second (main thread): pending restarts and the 10-minute history behind the live charts.</summary>
         private void TickWeb(float now)
         {
+            SyncCompoundingPerfLanguage(now);
             if (_webRestartAt >= 0f && now >= _webRestartAt)
             {
                 _webRestartAt = -1f;
@@ -156,6 +157,14 @@ namespace CactusPie.RamCleanerInterval
                         string key = WebServer.Form(body, "key");
                         string value = WebServer.Form(body, "value");
                         return WebServer.Response.Json(post ? OnMain(() => ApplyWebSetting(key, value)) : OnMain(BuildSettingsJson));
+                    case "/server":
+                        return new WebServer.Response { Body = ServerPage() };
+                    case "/api/cp/settings":
+                        string cpKey = WebServer.Form(body, "key");
+                        string cpValue = WebServer.Form(body, "value");
+                        return WebServer.Response.Json(post ? OnMain(() => ApplyCompoundingPerfSetting(cpKey, cpValue)) : OnMain(BuildCompoundingPerfSettingsJson));
+                    case "/api/cp/status":
+                        return WebServer.Response.Json(OnMain(() => BuildCompoundingPerfStatusJson(post)));
                     case "/api/action":
                         string name = WebServer.Form(body, "name");
                         return post ? WebServer.Response.Json(OnMain(() => RunWebAction(name))) : null;
@@ -204,6 +213,7 @@ namespace CactusPie.RamCleanerInterval
                    Link("/", "live", Loc.L("실시간", "Live")) +
                    Link("/report", "report", Loc.L("세션 보고서", "Session report")) +
                    Link("/settings", "settings", Loc.L("설정", "Settings")) +
+                   (!(CompoundingPerfPlugin is null) ? Link("/server", "server", Loc.L("서버 최적화", "Server optimisation")) : string.Empty) +
                    "<button type=\"button\" id=\"lang\" class=\"lang\" data-to=\"" + (Loc.En ? LanguageKorean : LanguageEnglish) + "\">" +
                    (Loc.En ? "한국어" : "English") + "</button></nav>";
         }
@@ -295,7 +305,15 @@ namespace CactusPie.RamCleanerInterval
                         "The same settings as F12. Changes apply in the game at once and are saved (reopen the F12 window to see them there). Picking a 'mode' changes many settings at once.")) +
                 "</p><div class=\"toolbar\"><input type=\"search\" id=\"q\" placeholder=\"" + H(Loc.L("설정 검색 (예: 서버, 끊김, GC)", "Search settings (e.g. server, stutter, GC)")) +
                 "\" aria-label=\"" + H(Loc.L("설정 검색", "Search settings")) + "\"></div><p class=\"msg\" id=\"msg\" role=\"status\"></p><div id=\"list\"></div>";
-            string strings = Strings(
+            return Shell(Loc.L("RAM 클리너 — 설정", "RAM Cleaner — settings"), "settings", content, SettingsStrings("/api/settings", null), "settings.js");
+        }
+
+        /// <summary>Texts and endpoints for settings.js (this plugin's settings, or CompoundingPerf's with a status endpoint).</summary>
+        private static string SettingsStrings(string api, string statusApi)
+        {
+            return Strings(
+                "api", api,
+                "statusApi", statusApi ?? string.Empty,
                 "offline", Offline,
                 "saving", Loc.L("저장 중", "saving"),
                 "saved", Loc.L("✓ 적용됨", "✓ applied"),
@@ -306,8 +324,8 @@ namespace CactusPie.RamCleanerInterval
                 "off", Loc.L("꺼짐", "off"),
                 "presetApplied", Loc.L("모드를 적용했습니다 — 아래 값들이 바뀌었습니다.", "Mode applied — the values below changed."),
                 "moving", Loc.L("포트를 {0}(으)로 바꿨습니다. 새 주소로 이동합니다...", "Port changed to {0}. Moving to the new address..."),
-                "webOff", Loc.L("웹 페이지를 껐습니다. 다시 켜려면 F12 '18. 웹 페이지'에서 켜세요.", "The web page is off now. Turn it back on in F12 '18. Web page'."));
-            return Shell(Loc.L("RAM 클리너 — 설정", "RAM Cleaner — settings"), "settings", content, strings, "settings.js");
+                "webOff", Loc.L("웹 페이지를 껐습니다. 다시 켜려면 F12 '18. 웹 페이지'에서 켜세요.", "The web page is off now. Turn it back on in F12 '18. Web page'."),
+                "cpSent", Loc.L("게임에 적용됨 — 0.8초 뒤 서버로 보냅니다. 결과는 위 '서버 상태'에 나옵니다.", "Applied in the game — sent to the server 0.8 s later. The result shows under 'Server status' above."));
         }
 
         /// <summary>Main thread: the session report including the raid in progress.</summary>
@@ -537,23 +555,50 @@ namespace CactusPie.RamCleanerInterval
 
         // ---------------------------------------------------------------- settings (main thread)
 
-        private IEnumerable<LocalizedEntry> WebSettings() =>
-            _localized.Where(e => e.Entry != null && e.Attributes.CustomDrawer == null && e.Attributes.Browsable != false);
+        /// <summary>One settings row for the web page — this plugin's own entries or another plugin's (CompoundingPerf).</summary>
+        private sealed class WebSetting
+        {
+            public string Key;
+            public string Category;
+            public string SortKey;
+            public string Name;
+            public string Description;
+            public int Order;
+            public ConfigEntryBase Entry;
+        }
 
-        private string BuildSettingsJson()
+        private IEnumerable<WebSetting> OwnWebSettings() =>
+            _localized.Where(e => e.Entry != null && e.Attributes.CustomDrawer == null && e.Attributes.Browsable != false)
+                .Select(e => new WebSetting
+                {
+                    Key = e.Key,
+                    Category = e.Attributes.Category,
+                    SortKey = e.CategoryKo,
+                    Name = e.Attributes.DispName,
+                    Description = e.Attributes.Description ?? string.Empty,
+                    Order = e.Attributes.Order ?? 0,
+                    Entry = e.Entry,
+                });
+
+        private string BuildSettingsJson() => SettingsJson(OwnWebSettings());
+
+        private string ApplyWebSetting(string key, string value) => ApplySetting(OwnWebSettings(), key, value);
+
+        /// <summary>Grouped by category (numbered, so ordinal order is the F12 order), higher Order first like F12.</summary>
+        private static string SettingsJson(IEnumerable<WebSetting> settings)
         {
             var json = new StringBuilder(64 * 1024);
             json.Append("{\"groups\":[");
             bool firstGroup = true;
-            foreach (IGrouping<string, LocalizedEntry> group in WebSettings()
+            foreach (IGrouping<string, WebSetting> group in settings
                          .Select((e, i) => new { e, i })
-                         .OrderBy(x => x.e.CategoryKo, StringComparer.Ordinal)
-                         .ThenByDescending(x => x.e.Attributes.Order ?? 0)
+                         .OrderBy(x => x.e.SortKey, StringComparer.Ordinal)
+                         .ThenByDescending(x => x.e.Order)
                          .ThenBy(x => x.i)
                          .Select(x => x.e)
-                         .GroupBy(e => e.CategoryKo))
+                         .GroupBy(e => e.SortKey))
             {
-                json.Append(firstGroup ? string.Empty : ",").Append("{\"cat\":").Append(WebServer.Str(group.First().Attributes.Category)).Append(",\"items\":[");
+                json.Append(firstGroup ? string.Empty : ",").Append("{\"cat\":").Append(WebServer.Str(group.First().Category)).Append(",\"items\":[");
                 firstGroup = false;
                 json.Append(string.Join(",", group.Select(SettingJson)));
                 json.Append("]}");
@@ -562,7 +607,7 @@ namespace CactusPie.RamCleanerInterval
             return json.Append("]}").ToString();
         }
 
-        private static string SettingJson(LocalizedEntry e)
+        private static string SettingJson(WebSetting e)
         {
             ConfigEntryBase entry = e.Entry;
             Type type = entry.SettingType;
@@ -583,14 +628,14 @@ namespace CactusPie.RamCleanerInterval
                     break;
             }
 
-            return "{\"key\":" + WebServer.Str(e.Key) + ",\"name\":" + WebServer.Str(e.Attributes.DispName) + ",\"desc\":" + WebServer.Str(e.Attributes.Description ?? string.Empty) +
+            return "{\"key\":" + WebServer.Str(e.Key) + ",\"name\":" + WebServer.Str(e.Name) + ",\"desc\":" + WebServer.Str(e.Description) +
                    ",\"type\":\"" + kind + "\",\"v\":" + WebServer.Str(entry.GetSerializedValue()) +
                    ",\"def\":" + WebServer.Str(TomlTypeConverter.ConvertToString(entry.DefaultValue, type)) + extra + "}";
         }
 
-        private string ApplyWebSetting(string key, string value)
+        private string ApplySetting(IEnumerable<WebSetting> settings, string key, string value)
         {
-            LocalizedEntry target = WebSettings().FirstOrDefault(e => e.Key == key);
+            WebSetting target = settings.FirstOrDefault(e => e.Key == key);
             if (target == null || value == null)
             {
                 return "{\"ok\":false,\"error\":" + WebServer.Str(Loc.L("모르는 설정입니다.", "Unknown setting.")) + "}";
