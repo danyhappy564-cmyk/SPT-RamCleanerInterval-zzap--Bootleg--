@@ -244,6 +244,8 @@ namespace CactusPie.RamCleanerInterval
                         return new WebServer.Response { Body = DashboardPage() };
                     case "/report":
                         return new WebServer.Response { Body = OnMain(ReportPage) };
+                    case "/history":
+                        return new WebServer.Response { Body = HistoryPage() };
                     case "/settings":
                         return new WebServer.Response { Body = SettingsPage() };
                     case "/api/live":
@@ -281,7 +283,7 @@ namespace CactusPie.RamCleanerInterval
                     case "/favicon.ico":
                         return new WebServer.Response { Status = 204, ContentType = "image/x-icon" };
                     default:
-                        return null;
+                        return path.StartsWith("/reports/", StringComparison.Ordinal) ? PastReport(path.Substring("/reports/".Length)) : null;
                 }
             }
             catch (Exception ex)
@@ -301,7 +303,7 @@ namespace CactusPie.RamCleanerInterval
             {
                 var assets = new Dictionary<string, string>();
                 var assembly = typeof(CustomRamCleanerIntervalPlugin).Assembly;
-                foreach (string file in new[] { "web.css", "common.js", "dashboard.js", "settings.js" })
+                foreach (string file in new[] { "web.css", "common.js", "dashboard.js", "settings.js", "report.js" })
                 {
                     using (Stream stream = assembly.GetManifestResourceStream("web." + file))
                     {
@@ -322,6 +324,7 @@ namespace CactusPie.RamCleanerInterval
             return "<nav class=\"nav\"><span class=\"brand\">" + Loc.L("RAM 클리너", "RAM Cleaner") + "</span>" +
                    Link("./", "live", Loc.L("실시간", "Live")) +
                    Link("report", "report", Loc.L("세션 보고서", "Session report")) +
+                   Link("history", "history", Loc.L("지난 기록", "History")) +
                    Link("settings", "settings", Loc.L("설정", "Settings")) +
                    (!(CompoundingPerfPlugin is null) ? Link("server", "server", Loc.L("서버 최적화", "Server optimisation")) : string.Empty) +
                    "<button type=\"button\" id=\"lang\" class=\"lang\" data-to=\"" + (Loc.En ? LanguageKorean : LanguageEnglish) + "\">" +
@@ -449,11 +452,90 @@ namespace CactusPie.RamCleanerInterval
             float now = Time.realtimeSinceStartup;
             string html = _sessionReport.BuildLive(
                 r => FillSessionRaid(r, CurrentSuspects(), _raidStartedAt >= 0f ? (now - _raidStartedAt) / 60.0 : 0.0),
-                "<style>" + Asset("web.css") + "</style>" + Nav("report") + "<script>" + Asset("common.js") + "</script>");
+                "<style>" + Asset("web.css") + "</style>" + Nav("report") + ReportToolbar() + "<script>" + Asset("common.js") + "</script>" +
+                "<script>window.RC=" + Strings("offline", Offline, "updated", Loc.L("자동 갱신:", "updated:")) + ";</script><script>" + Asset("report.js") + "</script>");
             return _sessionReportEnabled.Value
                 ? html
                 : html.Replace("<h1>", "<p class=\"alert\">" + WebUtility.HtmlEncode(Loc.L("'16. 세션 보고서'가 꺼져 있어서 레이드 그래프가 기록되지 않습니다.",
                     "'16. Session report' is off, so raid charts are not recorded.")) + "</p><h1>");
+        }
+
+        /// <summary>Auto refresh switch above the report (report.js) and the way to older sessions.</summary>
+        private static string ReportToolbar()
+        {
+            return "<div class=\"toolbar\" id=\"auto\"><label><input type=\"checkbox\" id=\"autoOn\" checked>" +
+                   WebUtility.HtmlEncode(Loc.L("자동 새로고침 (레이드 중 10초마다)", "Auto refresh (every 10 s in raid)")) +
+                   "</label><span class=\"msg\" id=\"autoMsg\" role=\"status\"></span><a class=\"btn\" href=\"history\">" +
+                   WebUtility.HtmlEncode(Loc.L("지난 세션 기록 보기", "Past sessions")) + "</a></div>";
+        }
+
+        /// <summary>
+        /// Web thread (files only): the saved session reports, newest first. Each one is written after every finished
+        /// raid, so the raids of earlier game sessions stay readable after a restart.
+        /// </summary>
+        private string HistoryPage()
+        {
+            string H(string text) => WebUtility.HtmlEncode(text);
+            FileInfo[] files = Directory.Exists(_sessionReport.Directory)
+                ? new DirectoryInfo(_sessionReport.Directory).GetFiles("RamCleaner-report-*.html").OrderByDescending(f => f.Name, StringComparer.Ordinal).ToArray()
+                : new FileInfo[0];
+            string current = Path.GetFileName(_sessionReport.FilePath);
+            var sb = new StringBuilder();
+            sb.Append("<h1>").Append(H(Loc.L("지난 기록", "History"))).Append("</h1><p class=\"sub\">")
+              .Append(H(Loc.L("세션(게임을 켠 동안)마다 보고서 파일 하나가 레이드가 끝날 때마다 저장됩니다. 최근 15개까지 보관 — BepInEx\\RamCleaner\\",
+                  "One report file per game session, saved after every finished raid. The latest 15 are kept — BepInEx\\RamCleaner\\")))
+              .Append("</p>");
+            if (files.Length == 0)
+            {
+                sb.Append("<section class=\"card\"><p>").Append(H(Loc.L("아직 저장된 보고서가 없습니다. 레이드 한 판이 끝나면 생깁니다.",
+                    "No saved reports yet. One appears once a raid has finished."))).Append("</p></section>");
+            }
+            else
+            {
+                sb.Append("<section><div class=\"scroll\"><table class=\"hist\"><thead><tr><th>")
+                  .Append(H(Loc.L("세션 시작", "session started"))).Append("</th><th>")
+                  .Append(H(Loc.L("마지막 저장", "last saved"))).Append("</th><th class=n>KB</th></tr></thead><tbody>");
+                foreach (FileInfo f in files)
+                {
+                    string stamp = f.Name.Substring("RamCleaner-report-".Length, f.Name.Length - "RamCleaner-report-".Length - ".html".Length);
+                    string started = DateTime.TryParseExact(stamp, "yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out DateTime t) ? t.ToString("yyyy-MM-dd HH:mm") : stamp;
+                    bool now = f.Name == current;
+                    sb.Append("<tr><td><a href=\"").Append(now ? "report" : "reports/" + Uri.EscapeDataString(f.Name)).Append("\">").Append(H(started)).Append("</a>")
+                      .Append(now ? " <span class=\"live\">" + H(Loc.L("이번 세션", "this session")) + "</span>" : string.Empty)
+                      .Append("</td><td>").Append(f.LastWriteTime.ToString("yyyy-MM-dd HH:mm")).Append("</td><td class=n>").Append(f.Length / 1024).Append("</td></tr>");
+                }
+
+                sb.Append("</tbody></table></div></section>");
+            }
+
+            return Shell(Loc.L("RAM 클리너 — 지난 기록", "RAM Cleaner — history"), "history", sb.ToString(), null, null);
+        }
+
+        /// <summary>Web thread: one saved report with the nav bar added (null = not one of ours).</summary>
+        private WebServer.Response PastReport(string name)
+        {
+            name = Uri.UnescapeDataString(name);
+            string file = Path.Combine(_sessionReport.Directory, name);
+            if (Path.GetFileName(name) != name || !name.StartsWith("RamCleaner-report-", StringComparison.Ordinal) ||
+                !name.EndsWith(".html", StringComparison.Ordinal) || !File.Exists(file))
+            {
+                return null;
+            }
+
+            string html;
+            using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                html = reader.ReadToEnd();
+            }
+
+            // Served under /reports/, so the nav's relative links need "../".
+            const string root = "<main class=\"viz-root\">";
+            string nav = "<style>" + Asset("web.css") + "</style>" + Nav("history").Replace("href=\"", "href=\"../") +
+                         "<script>" + Asset("common.js").Replace("'api/settings'", "'../api/settings'") + "</script>";
+            int at = html.IndexOf(root, StringComparison.Ordinal);
+            return new WebServer.Response { Body = at < 0 ? html : html.Insert(at + root.Length, nav) };
         }
 
         // ---------------------------------------------------------------- live data (main thread)

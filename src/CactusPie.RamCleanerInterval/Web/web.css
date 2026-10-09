@@ -38,3 +38,8 @@ input[type=number]{width:96px}input[type=range]{flex:1 1 140px;min-width:120px;a
 .switch input:focus-visible+span{outline:2px solid var(--series-1);outline-offset:2px}
 .hidden{display:none!important}
 @media (max-width:700px){.row{grid-template-columns:1fr}.ctl{justify-content:flex-start}}
+/* session report: auto refresh bar, history list */
+#auto{margin:0 0 12px}#auto label{display:flex;gap:6px;align-items:center;cursor:pointer}
+#auto .msg{margin:0;flex:1 1 160px}.msg.err{color:var(--bad)}
+.btn{text-decoration:none;display:inline-block}
+.hist td a{font-weight:600}
