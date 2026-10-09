@@ -13,7 +13,7 @@ public record ModMetadata : IModMetadata, IModBlazorMetadata
     public string Name { get; init; } = "RAM Cleaner (RamCleanerInterval)";
     public string Author { get; init; } = "CactusPie";
     public List<string>? Contributors { get; init; } = ["R_F (SPT 4.1 port)"];
-    public SemanticVersioning.Version Version { get; init; } = new("2.12.0");
+    public SemanticVersioning.Version Version { get; init; } = new("2.13.0");
     public SemanticVersioning.Range SptVersion { get; init; } = new("~4.1.5");
     public bool HasPrepatcher { get; init; }
     public List<string>? Incompatibilities { get; init; }
