@@ -62,6 +62,7 @@ namespace CactusPie.RamCleanerInterval
         private float _restartEvalAt = -1f;
         private bool _runwayWarnedThisRaid;
         private float _nextReportSample = -1f;
+        private float _nextReportSave = -1f; // the raid in progress is saved once a minute (survives Alt+F4 / crash)
         private int _reportFramesAt;
         private double _reportSecondsAt;
         private float _profilerNext = -1f;
@@ -198,6 +199,33 @@ namespace CactusPie.RamCleanerInterval
             Logger.LogInfo($"Loaded. incremental GC supported={GarbageCollector.isIncremental}, " +
                            $"slice default {GarbageCollector.incrementalTimeSliceNanoseconds / 1000000f:0.0}ms, " +
                            $"system RAM {SystemInfo.systemMemorySize} MB, VRAM {SystemInfo.graphicsMemorySize} MB, GC mode {GarbageCollector.GCMode}");
+        }
+
+        /// <summary>Alt+F4 / closing the game during a raid: save what the raid recorded so far.</summary>
+        internal void OnApplicationQuit()
+        {
+            if (_sessionReport != null && _sessionReportEnabled.Value && _inGame && _raidStartedAt >= 0f)
+            {
+                SaveUnfinishedRaid(Time.realtimeSinceStartup, true);
+            }
+        }
+
+        private void SaveUnfinishedRaid(float now, bool quitting)
+        {
+            try
+            {
+                if (_heavyEnabled.Value)
+                {
+                    _sessionReport.SetHeavy(_heavy.TopMods(10), _heavy.TopBundles(15));
+                }
+
+                List<string> suspects = CurrentSuspects();
+                _sessionReport.Checkpoint(r => FillSessionRaid(r, suspects, (now - _raidStartedAt) / 60.0), quitting);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning($"[report] could not save the raid in progress: {ex.Message}");
+            }
         }
 
         internal void OnDestroy()
@@ -490,6 +518,7 @@ namespace CactusPie.RamCleanerInterval
             _report.Begin(_snapshot, _dead);
             _sessionReport.BeginRaid(_map, _server.PrivateBytes > 0 ? _server.PrivateBytes / MemoryStats.BytesPerGb : -1);
             _nextReportSample = now;
+            _nextReportSave = now + 60f;
             _reportFramesAt = 0;
             _reportSecondsAt = 0;
             _leakNext = now + LeakFirstSnapshotDelay;
@@ -927,6 +956,12 @@ namespace CactusPie.RamCleanerInterval
                     _reportSecondsAt = _frames.TotalSeconds;
                     _sessionReport.Sample((now - _raidStartedAt) / 60.0, _snapshot.PrivateBytes / MemoryStats.BytesPerGb,
                         _snapshot.SystemAvailable / MemoryStats.BytesPerGb, _server.PrivateBytes > 0 ? _server.PrivateBytes / MemoryStats.BytesPerGb : -1, fps);
+                }
+
+                if (_sessionReportEnabled.Value && now >= _nextReportSave)
+                {
+                    _nextReportSave = now + 60f;
+                    SaveUnfinishedRaid(now, false);
                 }
             }
 
@@ -1703,7 +1738,7 @@ namespace CactusPie.RamCleanerInterval
 
             if (_sessionReportEnabled.Value)
             {
-                sb.Append(Loc.L("세션 보고서: ", "session report: ")).Append(_sessionReport.Written ? _sessionReport.FilePath : Loc.L("레이드 한 판이 끝나면 만들어짐", "written once a raid has finished")).Append('\n');
+                sb.Append(Loc.L("세션 보고서: ", "session report: ")).Append(_sessionReport.Written ? _sessionReport.FilePath : Loc.L("레이드 1분 뒤부터 1분마다 저장", "saved every minute from 1 min into a raid")).Append('\n');
             }
 
             sb.Append(Loc.L("웹 페이지: ", "web page: ")).Append(_web.Status);

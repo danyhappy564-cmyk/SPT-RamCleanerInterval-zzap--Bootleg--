@@ -25,6 +25,7 @@ namespace CactusPie.RamCleanerInterval
         private readonly List<Raid> _raids = new List<Raid>();
         private Raid _current;
         private int _writing;
+        private readonly object _fileLock = new object();
         private List<HeavyItemTracker.Stat> _heavyMods;
         private List<HeavyItemTracker.Stat> _heavyBundles;
 
@@ -52,6 +53,8 @@ namespace CactusPie.RamCleanerInterval
             public List<string> Suspects = new List<string>();
             public readonly List<double[]> Points = new List<double[]>(); // minute, game GB, system free GB, server GB, fps
             public bool InProgress;
+            public DateTime? SavedUnfinished; // set when the raid was saved before it ended (periodic save / game closed)
+            public bool Quit; // the game was closed during this raid
         }
 
         public SessionReport(ManualLogSource log, string directory)
@@ -108,6 +111,8 @@ namespace CactusPie.RamCleanerInterval
 
             fill(_current);
             _current.InProgress = false;
+            _current.SavedUnfinished = null;
+            _current.Quit = false;
             if (_current.Minutes >= 1f)
             {
                 _raids.Add(_current);
@@ -138,9 +143,34 @@ namespace CactusPie.RamCleanerInterval
             _heavyBundles = bundles;
         }
 
-        public void Write()
+        /// <summary>
+        /// Saves the file with the raid in progress included, marked unfinished, so a raid cut short (Alt+F4, crash)
+        /// still leaves its numbers. Main thread. <paramref name="quitting"/>: the game is closing, write right away.
+        /// </summary>
+        public void Checkpoint(Action<Raid> fill, bool quitting)
         {
-            if (_raids.Count == 0)
+            if (_current == null)
+            {
+                return;
+            }
+
+            fill(_current);
+            if (_current.Minutes < 1f)
+            {
+                return;
+            }
+
+            _current.InProgress = false;
+            _current.SavedUnfinished = DateTime.Now;
+            _current.Quit = quitting;
+            Write(_current, quitting);
+        }
+
+        public void Write() => Write(null, false);
+
+        private void Write(Raid unfinished, bool now)
+        {
+            if (_raids.Count == 0 && unfinished == null)
             {
                 return;
             }
@@ -148,11 +178,27 @@ namespace CactusPie.RamCleanerInterval
             string html;
             try
             {
-                html = Build(_heavyMods, _heavyBundles, null, null);
+                html = Build(_heavyMods, _heavyBundles, unfinished, null);
             }
             catch (Exception ex)
             {
                 _log.LogWarning($"[report] could not build the session report: {ex.Message}");
+                return;
+            }
+
+            if (now)
+            {
+                // The game is closing: a pool thread may not get to run.
+                try
+                {
+                    WriteFile(html);
+                    _log.LogInfo($"[report] saved the unfinished raid as the game closed: {FilePath}");
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning($"[report] could not write {FilePath}: {ex.Message}");
+                }
+
                 return;
             }
 
@@ -165,10 +211,7 @@ namespace CactusPie.RamCleanerInterval
             {
                 try
                 {
-                    System.IO.Directory.CreateDirectory(Directory);
-                    File.WriteAllText(FilePath, html, new UTF8Encoding(false));
-                    Written = true;
-                    Prune();
+                    WriteFile(html);
                 }
                 catch (Exception ex)
                 {
@@ -179,6 +222,17 @@ namespace CactusPie.RamCleanerInterval
                     Interlocked.Exchange(ref _writing, 0);
                 }
             });
+        }
+
+        private void WriteFile(string html)
+        {
+            lock (_fileLock)
+            {
+                System.IO.Directory.CreateDirectory(Directory);
+                File.WriteAllText(FilePath, html, new UTF8Encoding(false));
+                Written = true;
+                Prune();
+            }
         }
 
         private void Prune()
@@ -233,7 +287,7 @@ namespace CactusPie.RamCleanerInterval
                 {
                     Raid r = raids[i];
                     sb.Append("<tr>")
-                      .Append($"<td><a href=\"#raid{i + 1}\">{i + 1}</a>{(r.InProgress ? Loc.L(" (진행 중)", " (in progress)") : string.Empty)}</td><td>{r.Start:HH:mm}</td><td>{E(r.Map)}</td>")
+                      .Append($"<td><a href=\"#raid{i + 1}\">{i + 1}</a>{(r.InProgress ? Loc.L(" (진행 중)", " (in progress)") : r.SavedUnfinished != null ? Loc.L(" (중단)", " (cut short)") : string.Empty)}</td><td>{r.Start:HH:mm}</td><td>{E(r.Map)}</td>")
                       .Append($"<td class=n>{F(r.Minutes, "0")}</td><td class=n>{F(r.AvgFps, "0")}</td><td class=n>{F(r.LowFps, "0")}</td>")
                       .Append($"<td class=n>{r.Hitches}</td><td class=n>{F(r.PeakGameGb, "0.0")}</td><td class=n>{(r.MinSystemFreeGb >= 0 ? F(r.MinSystemFreeGb, "0.0") : "-")}</td>")
                       .Append($"<td class=n>{r.Deaths}</td><td class=n>{(r.PerDeathMb >= 0 ? F(r.PerDeathMb, "0") : "-")}</td>")
@@ -260,7 +314,11 @@ namespace CactusPie.RamCleanerInterval
                 Raid r = raids[i];
                 sb.Append($"<section id=\"raid{i + 1}\" class=\"card\"><h2>" +
                           Loc.L($"{i + 1}판 — {E(r.Map)} · {r.Start:HH:mm} · {F(r.Minutes, "0")}분", $"Raid {i + 1} — {E(r.Map)} · {r.Start:HH:mm} · {F(r.Minutes, "0")} min") +
-                          (r.InProgress ? " <span class=\"live\">" + Loc.L("진행 중", "in progress") + "</span>" : string.Empty) + "</h2>");
+                          (r.InProgress ? " <span class=\"live\">" + Loc.L("진행 중", "in progress") + "</span>"
+                              : r.SavedUnfinished != null ? " <span class=\"cut\">" + (r.Quit
+                                  ? Loc.L($"게임 종료로 중단 · {r.SavedUnfinished:HH:mm:ss}", $"game closed mid-raid · {r.SavedUnfinished:HH:mm:ss}")
+                                  : Loc.L($"끝나지 않음 · {r.SavedUnfinished:HH:mm:ss}까지 기록 (튕김·강제 종료)", $"unfinished · recorded until {r.SavedUnfinished:HH:mm:ss} (crash or forced exit)")) + "</span>"
+                              : string.Empty) + "</h2>");
                 sb.Append("<div class=\"tiles\">")
                   .Append(Tile(Loc.L("평균 FPS", "Average FPS"), F(r.AvgFps, "0"), Loc.L("1% 저점 ", "1% low ") + F(r.LowFps, "0")))
                   .Append(Tile(Loc.L("끊김", "Stutters"), r.Hitches.ToString(Inv),
@@ -473,6 +531,7 @@ border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 4px 16px rgba(0,0
 .nav a{padding:6px 12px;border-radius:8px;border:1px solid var(--border);color:var(--text-secondary);text-decoration:none}
 .nav a.on{background:var(--series-1);border-color:transparent;color:#fff}
 .live{font-size:12px;font-weight:600;color:#fff;background:var(--series-2);border-radius:6px;padding:2px 8px;vertical-align:2px}
+.cut{font-size:12px;font-weight:600;color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;padding:1px 8px;vertical-align:2px}
 @media (max-width:560px){.bar{grid-template-columns:1fr auto}.track{grid-column:1/-1;order:3}}";
 
         internal const string Js = @"
