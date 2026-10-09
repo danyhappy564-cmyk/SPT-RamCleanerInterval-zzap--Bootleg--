@@ -1,7 +1,7 @@
 # RAM 클리너 (RamCleanerInterval-zzap--Bootleg-) v2.13.0 릴리즈 노트 (v2.12.0 대비)
 
 > 원작: CactusPie — SPT-RamCleanerInterval (GPL-3.0). 이 버전은 비공식 SPT 4.1 포팅입니다. 문제가 생겨도 원작자에게 문의하지 말아 주세요.
-> 이번 버전은 **세션 보고서를 더 편하게 보기** 위한 작은 업데이트입니다. 사용자 제보 3건을 고쳤습니다.
+> 이번 버전은 **세션 보고서를 더 편하게 보기** 위한 작은 업데이트입니다. 사용자 제보 3건과 로그에서 찾은 계산 오류 1건을 고쳤습니다.
 
 **<한눈에 보기>**
 
@@ -41,6 +41,11 @@
 4. 레이드를 끝까지 마치면 '중단' 표시 없이 평소처럼 저장됩니다. 1분이 안 된 판은 전처럼 기록하지 않습니다.
 5. 저장은 1분에 한 번이라 레이드 중 부담은 거의 없을 것으로 봅니다(측정은 아직 안 함).
 
+- **'레이드 후 남은 메모리' 계산 수정**
+
+1. 2판째부터 이 값이 "-1.77GB"처럼 마이너스로 나오는 경우가 있었습니다. 비교 기준이 '레이드 로딩 시작 때'라서, 로딩 중 잠깐 생긴 메모리까지 기준에 들어갔기 때문입니다.
+2. 이제 2판째부터는 **지난 판이 끝나고 정리한 뒤의 값**과 비교합니다. 판마다 실제로 쌓이는 양이 제대로 보입니다(보고서에는 "지난 판 정리 뒤보다 +0.99GB"처럼 표시).
+
 - **알려진 문제 / 주의**
 
 1. 이번 변경은 빌드와 테스트 환경(브라우저·Mono)에서만 확인했고, **실제 게임에서는 아직 확인하지 못했습니다.**
@@ -60,7 +65,7 @@
 # RAM Cleaner (RamCleanerInterval-zzap--Bootleg-) v2.13.0 release notes (vs v2.12.0)
 
 > Original: CactusPie — SPT-RamCleanerInterval (GPL-3.0). This is an unofficial SPT 4.1 port; please don't contact the original author about it.
-> A small update that makes the **session report easier to follow**. It fixes three user reports.
+> A small update that makes the **session report easier to follow**. It fixes three user reports and one miscalculation found in a log.
 
 **At a glance**
 
@@ -99,6 +104,11 @@
    - **"unfinished · recorded until time"**: a crash or a Task Manager kill, kept up to the last one-minute save
 4. A raid played to the end is saved as usual, with no mark. Raids shorter than 1 minute are still not recorded.
 5. Saving once a minute should cost next to nothing during a raid (not measured yet).
+
+- **"Memory kept after the raid" fixed**
+
+1. From the second raid on this could read negative, e.g. "-1.77 GB". It was compared with the heap at raid loading, which already held that load's temporary memory.
+2. From the second raid it is now compared with the heap after the previous raid's cleanup, so what really piles up per raid shows (the report says e.g. "+0.99 GB vs after the last raid's cleanup").
 
 - **Known issues / notes**
 

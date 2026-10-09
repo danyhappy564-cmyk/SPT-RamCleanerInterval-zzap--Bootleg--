@@ -101,6 +101,7 @@ namespace CactusPie.RamCleanerInterval
 
         // Managed / native memory when the raid started loading, to show what is still held after the raid.
         private long _monoBeforeRaid = -1;
+        private long _monoAfterLastCleanup = -1; // heap after the previous raid's menu GC: the fair baseline from the 2nd raid on
         private long _nativeBeforeRaid = -1;
         private string _keptAfterRaid;
         private float _leakNext = -1f;
@@ -371,12 +372,20 @@ namespace CactusPie.RamCleanerInterval
                 return;
             }
 
-            long kept = _gc.LastUsedAfter - _monoBeforeRaid;
+            // Compare post-GC with post-GC. The heap read at raid loading already holds the new raid's loading garbage
+            // (2026-10-10 log: 3.2 GB in the menu -> 5.8 GB at loading), which made raid 2+ read "-1.8 GB kept".
+            bool sinceCleanup = _monoAfterLastCleanup > 0;
+            long baseline = sinceCleanup ? _monoAfterLastCleanup : _monoBeforeRaid;
+            long kept = _gc.LastUsedAfter - baseline;
+            _monoAfterLastCleanup = _gc.LastUsedAfter;
             string sign = kept >= 0 ? "+" : string.Empty;
-            _keptAfterRaid = Loc.L($"{DateTime.Now:HH:mm} 관리 메모리 레이드 전보다 {sign}{MemoryStats.Gb(kept)}GB",
-                                   $"{DateTime.Now:HH:mm} managed memory {sign}{MemoryStats.Gb(kept)} GB vs before the raid");
-            Logger.LogInfo($"[after raid] managed heap after GC {MemoryStats.Gb(_gc.LastUsedAfter)} GB vs {MemoryStats.Gb(_monoBeforeRaid)} GB " +
-                           $"before the raid ({(kept >= 0 ? "+" : "")}{MemoryStats.Gb(kept)} GB kept)");
+            _keptAfterRaid = sinceCleanup
+                ? Loc.L($"{DateTime.Now:HH:mm} 관리 메모리 지난 판 정리 뒤보다 {sign}{MemoryStats.Gb(kept)}GB",
+                        $"{DateTime.Now:HH:mm} managed memory {sign}{MemoryStats.Gb(kept)} GB vs after the last raid's cleanup")
+                : Loc.L($"{DateTime.Now:HH:mm} 관리 메모리 레이드 전보다 {sign}{MemoryStats.Gb(kept)}GB",
+                        $"{DateTime.Now:HH:mm} managed memory {sign}{MemoryStats.Gb(kept)} GB vs before the raid");
+            Logger.LogInfo($"[after raid] managed heap after GC {MemoryStats.Gb(_gc.LastUsedAfter)} GB vs {MemoryStats.Gb(baseline)} GB " +
+                           (sinceCleanup ? "after the last raid's cleanup" : "before the raid") + $" ({(kept >= 0 ? "+" : "")}{MemoryStats.Gb(kept)} GB kept)");
             if (kept >= (long)(_keptAfterRaidSuspectMb.Value * 1024L * 1024L))
             {
                 string warning = Loc.L($"레이드가 끝났는데도 관리 메모리 {MemoryStats.Gb(kept)}GB가 안 풀림 — 어떤 모드가 지난 레이드 데이터를 붙잡고 있음. ", $"{MemoryStats.Gb(kept)} GB of managed memory still not freed after the raid — some mod is holding on to the last raid's data. ") +
