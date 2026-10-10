@@ -697,13 +697,20 @@ namespace CactusPie.RamCleanerInterval
 
         private string PresetShortName()
         {
-            switch (_preset.Value)
+            return PresetName(_preset.Value) + (_preset.Value == PresetCustom && _diagMode.Value ? Loc.L(" + 원인 추적", " + diagnostics") : string.Empty);
+        }
+
+        /// <summary>A mode's name in the current language (the stored value carries both).</summary>
+        private static string PresetName(string preset)
+        {
+            switch (preset)
             {
                 case PresetAuto: return Loc.L("자동 정리", "Auto cleanup");
                 case PresetQuick: return Loc.L("간단 확인", "Quick view");
                 case PresetDeep: return Loc.L("집중 분석", "Deep analysis");
                 case PresetLeak: return Loc.L("누수 추적", "Leak hunt");
-                default: return Loc.L("직접 설정", "Custom") + (_diagMode.Value ? Loc.L(" + 원인 추적", " + diagnostics") : string.Empty);
+                case PresetOff: return Loc.L("꺼짐", "Off");
+                default: return Loc.L("직접 설정", "Custom");
             }
         }
 

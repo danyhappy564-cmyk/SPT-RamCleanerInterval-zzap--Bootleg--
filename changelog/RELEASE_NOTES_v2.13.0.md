@@ -9,10 +9,12 @@
 2. **'지난 기록' 탭** — 게임을 다시 켜도 이전 세션들의 레이드 기록을 웹 페이지에서 볼 수 있습니다.
 3. **강제 종료한 판도 기록** — 레이드 도중 Alt+F4로 끄거나 게임이 튕겨도 그 판이 보고서에 남습니다.
 4. **새 모드 '누수 추적'** — 판마다 메모리가 쌓이는 원인을 찾는 설정을 F12 '모드'에서 한 번에 켭니다.
+5. **Ctrl+F9로 모드 바꾸기** — 누를 때마다 자동 정리 → 간단 확인 → 집중 분석 → 누수 추적 → **꺼짐** 순서로 바뀝니다. F12나 웹 페이지에 들어가지 않아도 됩니다.
+6. **F12 글자 잘림 수정** — '현재 상태'와 버튼이 창 전체 너비를 쓰고, 긴 줄은 줄바꿈됩니다.
 
 **<설치>**
 
-- zip을 **SPT 폴더(예: `E:\SPT 4.1`)에 그대로 풀어서 덮어쓰면** 됩니다. 들어가는 위치와 F12 설정은 v2.12.0과 같습니다. 새로 생긴 것은 F12 '모드'의 선택지 **누수 추적** 하나뿐입니다.
+- zip을 **SPT 폴더(예: `E:\SPT 4.1`)에 그대로 풀어서 덮어쓰면** 됩니다. 들어가는 위치와 F12 설정 값은 v2.12.0과 같습니다. F12 '모드'에 선택지 **누수 추적**·**꺼짐**이 생겼고, Ctrl+F9의 역할이 '원인 추적 켜고 끄기'에서 '모드 바꾸기'로 바뀌었습니다. 이름이 길던 설정 몇 개는 이름만 짧아졌습니다(값은 그대로).
 - 런처 '모드 페이지'용 서버 부품(`SPT_Runtime\user\mods\RamCleanerInterval.Server\`)은 버전 숫자만 바뀌었습니다. 같이 덮어쓰면 됩니다.
 
 ---
@@ -56,6 +58,23 @@
 3. 쓰는 법: 메인 메뉴에서 모드를 **누수 추적**으로 바꿈 → 같은 맵 2판 → `BepInEx\RamCleaner\` 최신 로그와 세션 보고서를 보내 주세요. 로그의 `[leak]`·`[mod objects]` 줄에 무엇이 늘었는지 나옵니다.
 4. 다 찾았으면 원래 모드로 돌아가세요. 다른 모드를 고르면 06·11은 다시 꺼집니다.
 
+- **Ctrl+F9로 모드 바꾸기 + '꺼짐' 모드**
+
+1. 전에는 Ctrl+F9가 '원인 추적 모드'만 켜고 껐고, 모드를 바꾸려면 F12나 웹 페이지에 들어가야 했습니다.
+2. 이제 게임 중 **Ctrl+F9를 누를 때마다** 모드가 이 순서로 바뀝니다. 게임 알림에 지금 모드와 다음 모드가 나옵니다.
+   - 자동 정리 → 간단 확인 → 집중 분석 → 누수 추적 → **꺼짐** → 자동 정리 …
+   - '직접 설정' 상태에서 누르면 자동 정리부터 시작합니다.
+3. **꺼짐**은 이 모드가 아무것도 하지 않는 상태입니다. 자동 정리, 경고, 화면 표시, 측정이 모두 멈춥니다(원래 게임과 같음). 웹 페이지와 단축키만 남아 있어서 Ctrl+F9로 다시 켤 수 있습니다.
+4. 꺼짐에서 다시 켜면 워킹셋 정리 켜기/끄기는 꺼지기 전 값으로 돌아갑니다.
+5. 집중 분석에서 다음 모드로 넘어가면 원인 추적이 꺼지면서 요약이 전용 로그에 저장됩니다(전과 같음).
+6. 단축키는 F12 '05. 공통'의 **모드 바꾸기 단축키**에서 바꿀 수 있습니다(전 이름: 원인 추적 모드 단축키). F12 '수동 실행'에도 **[모드 바꾸기]** 버튼이 생겼습니다.
+
+- **F12 글자 잘림 수정**
+
+1. F12의 '현재 상태'와 '수동 실행' 버튼이 오른쪽 좁은 칸(약 270px)에 그려졌습니다. 특히 버튼 8개가 그 칸에 옆으로 나란히 끼어서 글자가 잘렸습니다.
+2. 이제 이 두 칸은 이름 칸 없이 **창 전체 너비**를 쓰고, 버튼은 세로로 한 줄씩 놓이며, 긴 줄은 줄바꿈합니다. '현재 상태' 맨 위에 지금 모드도 나옵니다.
+3. 왼쪽 이름 칸(약 260px)을 넘던 긴 설정 이름도 줄였습니다. 예: '의심 기준: 레이드 후에도 남는 관리 메모리 (MB)' → '의심 기준: 레이드 후 남는 메모리 (MB)'. 이름만 바뀌고 값은 그대로입니다.
+
 - **알려진 문제 / 주의**
 
 1. 이번 변경은 빌드와 테스트 환경(브라우저·Mono)에서만 확인했고, **실제 게임에서는 아직 확인하지 못했습니다.**
@@ -83,10 +102,12 @@
 2. **History tab** — the raids of earlier game sessions stay viewable on the web page after you restart the game.
 3. **Raids cut short are kept** — closing the game with Alt+F4 mid-raid, or a crash, no longer wipes that raid from the report.
 4. **New mode "Leak hunt"** — one pick in the F12 "Mode" turns on what you need to find memory that piles up raid after raid.
+5. **Ctrl+F9 switches the mode** — each press steps auto cleanup → quick view → deep analysis → leak hunt → **off**. No need to open F12 or the web page.
+6. **F12 text no longer cut off** — "Current status" and the buttons use the full window width and long lines wrap.
 
 **Install**
 
-- Extract the zip **straight into your SPT folder (e.g. `E:\SPT 4.1`)** and overwrite. Same locations and F12 settings as v2.12.0; the only new thing is the **Leak hunt** choice in the F12 "Mode".
+- Extract the zip **straight into your SPT folder (e.g. `E:\SPT 4.1`)** and overwrite. Same locations and F12 setting values as v2.12.0. The F12 "Mode" gains **Leak hunt** and **Off**, Ctrl+F9 now switches the mode instead of toggling diagnostic mode, and a few long setting names got shorter (values unchanged).
 - The optional server part for the launcher's mod pages (`SPT_Runtime\user\mods\RamCleanerInterval.Server\`) only changed its version number. Overwrite it as well.
 
 ---
@@ -129,6 +150,23 @@
    - Off: stutter-cause tracking per mod, stutter notifications, the per-mod cost bars on screen (the leak tracker's own snapshots hitch briefly)
 3. How to use it: switch the mode to **Leak hunt** in the main menu → two raids on the same map → send the newest log in `BepInEx\RamCleaner\` and the session report. The `[leak]` and `[mod objects]` lines show what grew.
 4. Switch back when you're done. Picking another mode turns 06 and 11 off again.
+
+- **Ctrl+F9 switches the mode + "Off" mode**
+
+1. Before, Ctrl+F9 only toggled diagnostic mode; changing the mode meant opening F12 or the web page.
+2. Now **each press of Ctrl+F9** in game moves to the next mode, and an in-game notification names the current and the next one.
+   - auto cleanup → quick view → deep analysis → leak hunt → **off** → auto cleanup …
+   - From "custom" it starts at auto cleanup.
+3. **Off** means this mod does nothing: automatic cleanup, warnings, overlay and measuring all stop (the plain game). Only the web page and the hotkey stay, so Ctrl+F9 turns it back on.
+4. Leaving off puts the working-set trim switch back to what it was before.
+5. Leaving deep analysis turns diagnostic mode off and saves its summary to the dedicated log (as before).
+6. Change the key in F12 "05. General" → **Mode hotkey** (was: diagnostic mode hotkey). "Manual actions" in F12 also has a **[Switch mode]** button.
+
+- **F12 text no longer cut off**
+
+1. F12's "Current status" and "Manual actions" were drawn in the narrow right column (about 270 px); the eight buttons even sat side by side in it, so their labels were cut.
+2. Both now use the **full window width** without the name column, the buttons stack one per line, and long lines wrap. "Current status" also shows the current mode at the top.
+3. Setting names wider than the name column (about 260 px) were shortened, e.g. "Suspect at memory kept after a raid (MB)" → "Suspect: kept after raid (MB)". Only names changed; values are kept.
 
 - **Known issues / notes**
 

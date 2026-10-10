@@ -3,9 +3,11 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using BepInEx;
+using BepInEx.Bootstrap;
 using BepInEx.Configuration;
 using Comfort.Common;
 using EFT;
@@ -157,6 +159,11 @@ namespace CactusPie.RamCleanerInterval
 
         private static string NoneYet => Loc.L("아직 없음", "none yet");
         private string _statusText = Loc.L("측정 중...", "measuring...");
+        private bool _switchingMode; // the mode hotkey is applying a mode: it shows one notification itself
+        private GUIStyle _f12Wrap;
+        private GUIStyle _f12Title;
+        private PropertyInfo _f12WindowRect;
+        private object _f12Manager;
 
         internal void Awake()
         {
@@ -254,7 +261,7 @@ namespace CactusPie.RamCleanerInterval
             CheckHitch(now);
             if (_diagHotkey.Value.IsDown())
             {
-                _diagMode.Value = !_diagMode.Value;
+                CyclePreset();
             }
             _frames.Tick(_inGame && _raidStartedAt >= 0f && now - _raidStartedAt > 5f);
             _profiler.CountFrame();
@@ -1248,6 +1255,34 @@ namespace CactusPie.RamCleanerInterval
 
         // ---------------------------------------------------------------- Diagnostic mode (one key / one button)
 
+        /// <summary>
+        /// The mode hotkey (Ctrl+F9): moves the F12 "Mode" to the next one in PresetCycle (from "custom" to the first) and
+        /// says which mode is on now. Setting the value runs ApplyPreset through its SettingChanged handler.
+        /// </summary>
+        private void CyclePreset()
+        {
+            int index = Array.IndexOf(PresetCycle, _preset.Value);
+            string next = PresetCycle[(index + 1) % PresetCycle.Length];
+            _switchingMode = true;
+            try
+            {
+                _preset.Value = next;
+            }
+            finally
+            {
+                _switchingMode = false;
+            }
+
+            string after = PresetCycle[(Array.IndexOf(PresetCycle, next) + 1) % PresetCycle.Length];
+            Logger.LogInfo($"Mode hotkey: {next}");
+            string text = next == PresetOff
+                ? Loc.L($"RAM 클리너: 꺼짐 — 자동 정리·표시 모두 멈춤 ({_diagHotkey.Value}: 다시 켜기 → {PresetName(after)})",
+                        $"RAM Cleaner: off — cleanup and overlay stopped ({_diagHotkey.Value}: turn on again → {PresetName(after)})")
+                : Loc.L($"RAM 클리너 모드: {PresetName(next)} ({_diagHotkey.Value}: 다음 → {PresetName(after)})",
+                        $"RAM Cleaner mode: {PresetName(next)} ({_diagHotkey.Value}: next → {PresetName(after)})");
+            Notify(text, false);
+        }
+
         private void OnDiagChanged()
         {
             float now = Time.realtimeSinceStartup;
@@ -1267,7 +1302,11 @@ namespace CactusPie.RamCleanerInterval
                                (_diagHeavy.Value ? Loc.L(" + 누수 추적·오브젝트 수", " + leak tracker · object counts") : string.Empty) + ") ===";
                 _sessionLog?.WriteBlock(start);
                 Logger.LogInfo("Diagnostic mode ON");
-                Notify(Loc.L($"RAM 클리너: 원인 추적 시작 — {_diagHotkey.Value} 로 끄기", $"RAM Cleaner: diagnostic mode on — {_diagHotkey.Value} to turn off"), false);
+                if (!_switchingMode)
+                {
+                    Notify(Loc.L("RAM 클리너: 원인 추적 시작", "RAM Cleaner: diagnostic mode on"), false);
+                }
+
                 return;
             }
 
@@ -1275,7 +1314,10 @@ namespace CactusPie.RamCleanerInterval
             _sessionLog?.WriteBlock(summary);
             Logger.LogInfo("Diagnostic mode OFF");
             _diagStartedAt = -1f;
-            Notify(Loc.L("RAM 클리너: 원인 추적 종료 — 요약은 전용 로그(BepInEx\\RamCleaner)에 저장", "RAM Cleaner: diagnostic mode off — summary saved to the dedicated log (BepInEx\\RamCleaner)"), false);
+            if (!_switchingMode)
+            {
+                Notify(Loc.L("RAM 클리너: 원인 추적 종료 — 요약은 전용 로그(BepInEx\\RamCleaner)에 저장", "RAM Cleaner: diagnostic mode off — summary saved to the dedicated log (BepInEx\\RamCleaner)"), false);
+            }
         }
 
         private string BuildDiagSummary(float now)
@@ -1673,6 +1715,8 @@ namespace CactusPie.RamCleanerInterval
             long vram = _vram.Dedicated;
 
             var sb = new StringBuilder(768);
+            sb.Append(Loc.L("모드: ", "mode: ")).Append(PresetShortName())
+              .Append(Loc.L($" — {_diagHotkey.Value}로 바꾸기\n", $" — {_diagHotkey.Value} to switch\n"));
             sb.Append(Loc.L("관리 메모리(Mono 힙): 사용 ", "managed memory (Mono heap): used ")).Append(MemoryStats.Gb(s.MonoUsed))
               .Append(Loc.L(" GB / 확보 ", " GB / reserved ")).Append(MemoryStats.Gb(s.MonoReserved)).Append(" GB\n");
             if (s.SystemTotal > 0)
@@ -1902,8 +1946,7 @@ namespace CactusPie.RamCleanerInterval
             sb.Append(Loc.L("레이드 후 남은 메모리: ", "memory kept after the raid: ")).Append(_keptAfterRaid ?? NoneYet).Append('\n');
 
             sb.Append(Loc.L("누수 추적: ", "leak tracker: ")).Append(LeakOn || _leak.Snapshots > 0 ? _leak.LastSummary : Loc.L("꺼짐", "off")).Append('\n');
-            sb.Append(Loc.L("원인 추적 모드: ", "diagnostic mode: ")).Append(_diagMode.Value ? Loc.L($"켜짐 ({(Time.realtimeSinceStartup - Math.Max(0f, _diagStartedAt)) / 60f:0}분째)", $"on ({(Time.realtimeSinceStartup - Math.Max(0f, _diagStartedAt)) / 60f:0} min)") : Loc.L("꺼짐", "off"))
-              .Append(Loc.L($" — 단축키 {_diagHotkey.Value}\n", $" — hotkey {_diagHotkey.Value}\n"));
+            sb.Append(Loc.L("원인 추적 모드: ", "diagnostic mode: ")).Append(_diagMode.Value ? Loc.L($"켜짐 ({(Time.realtimeSinceStartup - Math.Max(0f, _diagStartedAt)) / 60f:0}분째)", $"on ({(Time.realtimeSinceStartup - Math.Max(0f, _diagStartedAt)) / 60f:0} min)") : Loc.L("꺼짐", "off")).Append('\n');
             sb.Append(Loc.L("전용 로그: ", "dedicated log: ")).Append(_sessionLog?.FilePath ?? Loc.L("만들 수 없음", "can't be created"));
             _statusText = sb.ToString();
 
@@ -1961,7 +2004,7 @@ namespace CactusPie.RamCleanerInterval
             if (_diagMode.Value)
             {
                 float minutes = (now - Math.Max(0f, _diagStartedAt)) / 60f;
-                _panel.Header(Loc.L($"● 원인 추적 중 — {_diagHotkey.Value} 로 끄기", $"● Diagnostic mode — {_diagHotkey.Value} to turn off"), OverlayPanel.Yellow, Loc.L($"{minutes:0}분째", $"{minutes:0} min"));
+                _panel.Header(Loc.L($"● 원인 추적 중 — {_diagHotkey.Value}: 다음 모드", $"● Diagnostic mode — {_diagHotkey.Value}: next mode"), OverlayPanel.Yellow, Loc.L($"{minutes:0}분째", $"{minutes:0} min"));
             }
 
             // --- memory
@@ -2135,6 +2178,9 @@ namespace CactusPie.RamCleanerInterval
 
         private void ManualButtonsDrawer(ConfigEntryBase entry)
         {
+            // F12 draws every setting inside a horizontal row: without this the buttons sat side by side and their text was cut.
+            GUILayout.BeginVertical();
+            F12Title(entry);
             if (GUILayout.Button(_gc.Running ? Loc.L("GC 정리 중...", "GC running...") : Loc.L("GC 정리", "Run GC"), GUILayout.ExpandWidth(true)) && !_gc.Running)
             {
                 if (!_gc.Start("manual", true, false))
@@ -2158,6 +2204,12 @@ namespace CactusPie.RamCleanerInterval
                 RunLeakSnapshot("manual");
             }
 
+            string nextMode = PresetName(PresetCycle[(Array.IndexOf(PresetCycle, _preset.Value) + 1) % PresetCycle.Length]);
+            if (GUILayout.Button(Loc.L($"모드 바꾸기: {PresetName(_preset.Value)} → {nextMode} ({_diagHotkey.Value})", $"Switch mode: {PresetName(_preset.Value)} → {nextMode} ({_diagHotkey.Value})"), GUILayout.ExpandWidth(true)))
+            {
+                CyclePreset();
+            }
+
             if (GUILayout.Button(_diagMode.Value ? Loc.L("원인 추적 끄기", "Turn diagnostic mode off") : Loc.L("원인 추적 켜기", "Turn diagnostic mode on"), GUILayout.ExpandWidth(true)))
             {
                 _diagMode.Value = !_diagMode.Value;
@@ -2172,11 +2224,61 @@ namespace CactusPie.RamCleanerInterval
             {
                 OpenSessionReport();
             }
+
+            GUILayout.EndVertical();
         }
 
         private void StatusDrawer(ConfigEntryBase entry)
         {
-            GUILayout.Label(_statusText, GUILayout.ExpandWidth(true));
+            GUILayout.BeginVertical();
+            F12Title(entry);
+            if (_f12Wrap == null)
+            {
+                _f12Wrap = new GUIStyle(GUI.skin.label) { wordWrap = true };
+            }
+
+            // A fixed width makes the wrapped text measure its real height; without it long lines ran out of the F12 window.
+            GUILayout.Label(_statusText, _f12Wrap, GUILayout.Width(F12ContentWidth()));
+            GUILayout.EndVertical();
+        }
+
+        /// <summary>The setting's name as a bold line: the drawers hide the name column to get the whole window width.</summary>
+        private void F12Title(ConfigEntryBase entry)
+        {
+            if (_f12Title == null)
+            {
+                _f12Title = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, wordWrap = true };
+            }
+
+            var attributes = entry.Description.Tags.OfType<ConfigurationManagerAttributes>().FirstOrDefault();
+            GUILayout.Label(attributes?.DispName ?? entry.Definition.Key, _f12Title, GUILayout.Width(F12ContentWidth()));
+        }
+
+        /// <summary>
+        /// Usable width inside the F12 window (ConfigurationManager's internal SettingWindowRect minus scroll bar and margins).
+        /// Falls back to its default 650 px window when the manager can't be read.
+        /// </summary>
+        private float F12ContentWidth()
+        {
+            try
+            {
+                if (_f12WindowRect == null && Chainloader.PluginInfos.TryGetValue("com.bepis.bepinex.configurationmanager", out BepInEx.PluginInfo info) && info.Instance != null)
+                {
+                    _f12Manager = info.Instance;
+                    _f12WindowRect = _f12Manager.GetType().GetProperty("SettingWindowRect", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                }
+
+                if (_f12WindowRect != null)
+                {
+                    return Math.Max(200f, ((Rect)_f12WindowRect.GetValue(_f12Manager, null)).width - 60f);
+                }
+            }
+            catch (Exception)
+            {
+                // another ConfigurationManager build: use the default width
+            }
+
+            return 590f;
         }
 
         internal void OnGUI()

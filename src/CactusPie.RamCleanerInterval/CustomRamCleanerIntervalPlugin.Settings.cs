@@ -61,10 +61,15 @@ namespace CactusPie.RamCleanerInterval
         private const string PresetQuick = "간단 확인 · Quick view";
         private const string PresetDeep = "집중 분석 · Deep analysis";
         private const string PresetLeak = "누수 추적 · Leak hunt";
+        private const string PresetOff = "꺼짐 · Off";
+
+        /// <summary>The order the mode hotkey (Ctrl+F9) walks through; from "custom" it starts at the first one.</summary>
+        private static readonly string[] PresetCycle = { PresetAuto, PresetQuick, PresetDeep, PresetLeak, PresetOff };
 
         private ConfigEntry<string> _language;
         private ConfigEntry<string> _preset;
         private ConfigEntry<string> _presetApplied;
+        private ConfigEntry<bool> _trimBeforeOff;
 
         /// <summary>Every F12 entry with its Korean texts, so the language switch can rewrite what F12 shows.</summary>
         private readonly List<LocalizedEntry> _localized = new List<LocalizedEntry>();
@@ -194,6 +199,9 @@ namespace CactusPie.RamCleanerInterval
                 _presetApplied.Value = _preset.Value;
             };
 
+            _trimBeforeOff = Config.Bind(InternalSection, "Trim before off", true,
+                new ConfigDescription("Do not edit.", null, new ConfigurationManagerAttributes { Browsable = false }));
+
             // The mode can also be changed in the .cfg while the game is closed (the SPT launcher's mod page does that):
             // a value read from the file raises no SettingChanged, so apply it here once.
             _presetApplied = Config.Bind(InternalSection, "Applied preset", _preset.Value,
@@ -220,9 +228,11 @@ namespace CactusPie.RamCleanerInterval
                 "프레임당 0.1~0.5ms 정도 더 들고 로그가 많이 쌓이니 문제를 찾는 동안만 쓰고 돌아오세요.\n" +
                 "• 누수 추적 — 판마다 메모리가 쌓이는 원인 찾기: 간단 확인 + 모드별 메모리 생성량, '06. 누수 추적', '11. 모드별 오브젝트 증가', [실험] 무거운 아이템 찾기. " +
                 "끊김 원인 추적은 끕니다. 몇 분마다 0.2~1초 끊길 수 있으니 같은 맵 2판 정도만 돌리고 돌아오세요.\n" +
+                "• 꺼짐 — 이 모드가 아무것도 안 함: 자동 정리·경고·화면 표시·측정 전부 멈춤(원래 게임 그대로). 웹 페이지와 단축키만 남습니다.\n" +
+                "게임 중 Ctrl+F9('모드 바꾸기 단축키')를 누르면 자동 정리 → 간단 확인 → 집중 분석 → 누수 추적 → 꺼짐 순서로 바뀝니다.\n" +
                 "• 직접 설정 — 지금 설정을 그대로 둡니다.\n" +
                 "참고: 집중 분석에서 다른 모드로 바꿀 때 '모드별 부하 분석'의 측정 장치는 게임을 다시 켜야 완전히 빠집니다(그 전까지는 측정만 멈춤).",
-                new AcceptableValueList<string>(PresetCustom, PresetAuto, PresetQuick, PresetDeep, PresetLeak), 99);
+                new AcceptableValueList<string>(PresetCustom, PresetAuto, PresetQuick, PresetDeep, PresetLeak, PresetOff), 99);
         }
 
         /// <summary>Rewrites what F12 shows (category, name, description) for the chosen language. F12 picks it up when reopened.</summary>
@@ -249,24 +259,38 @@ namespace CactusPie.RamCleanerInterval
             bool quick = preset == PresetQuick;
             bool deep = preset == PresetDeep;
             bool leak = preset == PresetLeak;
-            if (!auto && !quick && !deep && !leak)
+            bool off = preset == PresetOff;
+            if (!auto && !quick && !deep && !leak && !off)
             {
                 return;
             }
 
             bool view = quick || deep || leak;
+            bool on = !off;
 
-            // Cleaning + safety: the same in every mode.
-            _gcEnabled.Value = true;
-            _postRaidCleanup.Value = true;
+            // Cleaning + safety: the same in every mode except "off".
+            _gcEnabled.Value = on;
+            _postRaidCleanup.Value = on;
             _waitForQuiet.Value = true;
             _unloadAtStart.Value = false;
             _unloadAuto.Value = false;
-            _warnEnabled.Value = true;
-            _warnNotify.Value = true;
-            _forecastEnabled.Value = true;
-            _forecastNotify.Value = true;
-            _restartNotify.Value = true;
+            _warnEnabled.Value = on;
+            _warnNotify.Value = on;
+            _forecastEnabled.Value = on;
+            _forecastNotify.Value = on;
+            _restartNotify.Value = on;
+
+            // The other modes leave the working-set trim as the user set it; only "off" stops it, and leaving "off" puts it back.
+            bool wasOff = _presetApplied != null && _presetApplied.Value == PresetOff;
+            if (off && !wasOff)
+            {
+                _trimBeforeOff.Value = _trimEnabled.Value;
+                _trimEnabled.Value = false;
+            }
+            else if (!off && wasOff)
+            {
+                _trimEnabled.Value = _trimBeforeOff.Value;
+            }
             _diagHeavy.Value = false;
 
             // What is measured, shown and logged.
@@ -292,7 +316,7 @@ namespace CactusPie.RamCleanerInterval
             _profilerContinuous.Value = deep;
             _heavyEnabled.Value = deep || leak;
             _overlayHeavy.Value = true;
-            _logIntervalSec.Value = auto ? 0 : quick ? 120 : leak ? 60 : 30;
+            _logIntervalSec.Value = auto || off ? 0 : quick ? 120 : leak ? 60 : 30;
             _diagMode.Value = deep;
 
             // Leak hunt: the two snapshot trackers (each hitches 0.2-1 s every few minutes, so never in the others).
@@ -462,7 +486,7 @@ namespace CactusPie.RamCleanerInterval
                 "③ 사망 1명당 메모리(봇 장비 — 봇 스폰 모드 쪽). 11번을 켜면 모드별 오브젝트 증가도 포함합니다.",
                 null, 10);
 
-            _allocSuspectMbPerMin = Bind(MemSuspectSection, MemSuspectCategory, "Alloc suspect (MB/min)", "의심 기준: 모드 메모리 생성 (MB/분)", 50f,
+            _allocSuspectMbPerMin = Bind(MemSuspectSection, MemSuspectCategory, "Alloc suspect (MB/min)", "의심 기준: 모드 메모리 (MB/분)", 50f,
                 "한 모드가 분당 이만큼 넘게 만들면서 모드 전체 생성량의 40% 이상이면 의심합니다(레이드 초반보다 2배 늘어도 의심). " +
                 "레이드 중엔 게임이 GC를 꺼 둬서 이게 그대로 메모리 증가가 됩니다(1번 자동 GC가 치우긴 함).",
                 new AcceptableValueRange<float>(5f, 1000f), 9);
@@ -475,7 +499,7 @@ namespace CactusPie.RamCleanerInterval
                 "최근 사망 10명 기준 1명당 메모리가 이보다 크면 '봇 장비 메모리 과다'로 표시합니다. 참고: APBS 수정 전 280~340MB, 후 60~75MB.",
                 new AcceptableValueRange<int>(50, 2000), 7);
 
-            _keptAfterRaidSuspectMb = Bind(MemSuspectSection, MemSuspectCategory, "Kept after raid suspect (MB)", "의심 기준: 레이드 후에도 남는 관리 메모리 (MB)", 500,
+            _keptAfterRaidSuspectMb = Bind(MemSuspectSection, MemSuspectCategory, "Kept after raid suspect (MB)", "의심 기준: 레이드 후 남는 메모리 (MB)", 500,
                 "레이드가 끝나고 메뉴에서 GC까지 한 뒤에도 관리 메모리가 레이드 전보다 이만큼 넘게 많으면 경고합니다(레이드 끝난 뒤 메뉴 정리가 켜져 있어야 측정). " +
                 "어떤 모드가 지난 레이드 데이터를 놓지 않는 것이라 레이드를 반복할수록 쌓입니다.",
                 new AcceptableValueRange<int>(100, 10000), 6);
@@ -536,7 +560,7 @@ namespace CactusPie.RamCleanerInterval
 
         private void BindHeavyItemSettings()
         {
-            _heavyEnabled = Bind(HeavyItemsSection, HeavyItemsCategory, "Enabled", "[실험] 무거운 모드 아이템 찾기 켜기", false,
+            _heavyEnabled = Bind(HeavyItemsSection, HeavyItemsCategory, "Enabled", "[실험] 무거운 아이템 찾기 켜기", false,
                 "레이드 중 봇이 스폰될 때 게임이 장비 번들(모델·텍스처)을 처음 불러오면서 늘어난 메모리를 재서, " +
                 "어느 모드의 어느 아이템이 메모리를 많이 먹는지 순위를 만듭니다(SPT 번들 목록으로 모드 구분). " +
                 "'사망 1명당 메모리'가 클 때 APBS 등에서 뺄 아이템을 고르는 참고용입니다.\n" +
@@ -563,7 +587,7 @@ namespace CactusPie.RamCleanerInterval
                 "6969는 SPT 서버가 쓰는 번호라 쓸 수 없습니다. 런처 '모드 페이지'에서 6969 주소(/ramcleaner/)로 열리는 것은 서버 부품이 서버 안에서 이 페이지를 대신 보여 주는 것이니, 이 값은 그대로 두면 됩니다.",
                 new AcceptableValueRange<int>(1024, 65535), 9);
 
-            _webLan = Bind(WebSection, WebCategory, "Allow LAN", "같은 네트워크의 다른 기기에서 접속 허용", false,
+            _webLan = Bind(WebSection, WebCategory, "Allow LAN", "다른 기기 접속 허용 (같은 네트워크)", false,
                 "켜면 휴대폰·다른 PC에서 이 PC의 IP 주소(예: http://192.168.0.10:6977/)로 열 수 있습니다. " +
                 "대신 같은 네트워크의 누구나 설정을 바꿀 수 있고, 처음 켤 때 윈도우 방화벽 허용 창이 뜰 수 있습니다. 집 네트워크에서만 켜세요.",
                 null, 8);
@@ -656,7 +680,7 @@ namespace CactusPie.RamCleanerInterval
                 "레이드 중 메모리 증가는 대부분 죽은 봇의 장비(모드 아이템 종류가 많을수록 큼)라 에셋 정리로는 안 줄어듭니다.",
                 null, 8);
 
-            _unloadNativeGrowthGb = Bind(AssetSection, AssetCategory, "Native growth trigger (GB)", "정리 시작 기준: 네이티브 증가량 (GB)", 8f,
+            _unloadNativeGrowthGb = Bind(AssetSection, AssetCategory, "Native growth trigger (GB)", "시작 기준: 네이티브 증가량 (GB)", 8f,
                 "마지막 에셋 정리(또는 레이드 시작) 이후 네이티브 메모리가 이만큼 늘면 정리합니다.",
                 new AcceptableValueRange<float>(2f, 64f), 7);
 
@@ -687,7 +711,7 @@ namespace CactusPie.RamCleanerInterval
                 "워킹셋 정리는 RAM 부족 비상용이라 최대 60초만 기다립니다.",
                 new AcceptableValueRange<int>(0, 900), 8);
 
-            _runOnInventory = Bind(TimingSection, TimingCategory, "Run on inventory", "인벤토리 열면 밀린 정리 바로 실행", true,
+            _runOnInventory = Bind(TimingSection, TimingCategory, "Run on inventory", "인벤토리 열면 밀린 정리 실행", true,
                 "정리할 게 밀려 있을 때 인벤토리(Tab)를 열면 그 즉시 실행합니다. 가방 정리하는 동안이라 끊김이 거의 안 느껴집니다.",
                 null, 7);
         }
@@ -704,16 +728,17 @@ namespace CactusPie.RamCleanerInterval
                 "메뉴로 돌아온 뒤 게임이 자체 정리를 마칠 때까지 기다리는 시간입니다.",
                 new AcceptableValueRange<int>(5, 120), 11);
 
-            _diagMode = Bind(GeneralSection, GeneralCategory, "Diagnostic mode", "원인 추적 모드 (한 번에 켜기/끄기)", false,
+            _diagMode = Bind(GeneralSection, GeneralCategory, "Diagnostic mode", "원인 추적 모드 (한 번에 켜기)", false,
                 "켜면 화면 표시 + 모드별 상시 측정 + 끊김 원인 추적을 한꺼번에 켭니다(개별 설정과 상관없이). 끄면 개별 설정대로 돌아가고, " +
-                "그동안의 요약(의심 모드, 끊김 원인, 메모리)이 전용 로그(BepInEx\\RamCleaner 폴더)에 저장됩니다. 아래 단축키로도 켜고 끌 수 있습니다.",
+                "그동안의 요약(의심 모드, 끊김 원인, 메모리)이 전용 로그(BepInEx\\RamCleaner 폴더)에 저장됩니다. 모드를 '집중 분석'으로 고르면 같이 켜집니다.",
                 null, 12);
 
-            _diagHotkey = Bind(GeneralSection, GeneralCategory, "Diagnostic mode key", "원인 추적 모드 단축키", new KeyboardShortcut(UnityEngine.KeyCode.F9, UnityEngine.KeyCode.LeftControl),
-                "게임 중 이 키를 누르면 원인 추적 모드를 켜고 끕니다(게임 알림으로 알려 줌).",
+            _diagHotkey = Bind(GeneralSection, GeneralCategory, "Diagnostic mode key", "모드 바꾸기 단축키", new KeyboardShortcut(UnityEngine.KeyCode.F9, UnityEngine.KeyCode.LeftControl),
+                "게임 중 누를 때마다 맨 위 '모드'를 자동 정리 → 간단 확인 → 집중 분석 → 누수 추적 → 꺼짐 → 자동 정리 … 순서로 바꿉니다(게임 알림으로 알려 줌). " +
+                "'직접 설정' 상태에서 누르면 자동 정리부터 시작합니다.",
                 null, 12);
 
-            _diagHeavy = Bind(GeneralSection, GeneralCategory, "Diagnostic includes heavy", "원인 추적 모드에 무거운 추적 포함", false,
+            _diagHeavy = Bind(GeneralSection, GeneralCategory, "Diagnostic includes heavy", "원인 추적에 무거운 추적 포함", false,
                 "켜면 원인 추적 모드 때 '06. 누수 추적'과 '11. 모드별 오브젝트 증가'도 같이 켭니다. 각각 몇 분마다 0.2~1초 끊길 수 있습니다.",
                 null, 11);
 
@@ -781,6 +806,7 @@ namespace CactusPie.RamCleanerInterval
             {
                 attributes.CustomDrawer = drawer;
                 attributes.HideDefaultButton = true;
+                attributes.HideSettingName = true; // the drawers draw their own title and use the whole window width
             }
 
             ConfigEntry<T> bound = Config.Bind(section, key, defaultValue, new ConfigDescription(description, range, attributes));
