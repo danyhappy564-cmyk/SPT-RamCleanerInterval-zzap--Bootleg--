@@ -1,17 +1,18 @@
 # RAM 클리너 (RamCleanerInterval-zzap--Bootleg-) v2.13.0 릴리즈 노트 (v2.12.0 대비)
 
 > 원작: CactusPie — SPT-RamCleanerInterval (GPL-3.0). 이 버전은 비공식 SPT 4.1 포팅입니다. 문제가 생겨도 원작자에게 문의하지 말아 주세요.
-> 이번 버전은 **세션 보고서를 더 편하게 보기** 위한 작은 업데이트입니다. 사용자 제보 3건과 로그에서 찾은 계산 오류 1건을 고쳤습니다.
+> 이번 버전은 **세션 보고서를 더 편하게 보기** 위한 작은 업데이트입니다. 사용자 제보 3건과 로그에서 찾은 계산 오류 1건을 고쳤고, 메모리 원인 찾기용 모드를 하나 추가했습니다.
 
 **<한눈에 보기>**
 
 1. **보고서 자동 새로고침** — 웹 페이지 '세션 보고서'가 레이드 중 10초마다 저절로 바뀝니다. 이제 F5를 누를 필요가 없습니다.
 2. **'지난 기록' 탭** — 게임을 다시 켜도 이전 세션들의 레이드 기록을 웹 페이지에서 볼 수 있습니다.
 3. **강제 종료한 판도 기록** — 레이드 도중 Alt+F4로 끄거나 게임이 튕겨도 그 판이 보고서에 남습니다.
+4. **새 모드 '누수 추적'** — 판마다 메모리가 쌓이는 원인을 찾는 설정을 F12 '모드'에서 한 번에 켭니다.
 
 **<설치>**
 
-- zip을 **SPT 폴더(예: `E:\SPT 4.1`)에 그대로 풀어서 덮어쓰면** 됩니다. 들어가는 위치와 F12 설정은 v2.12.0과 같고, 새로 생기는 F12 항목은 없습니다.
+- zip을 **SPT 폴더(예: `E:\SPT 4.1`)에 그대로 풀어서 덮어쓰면** 됩니다. 들어가는 위치와 F12 설정은 v2.12.0과 같습니다. 새로 생긴 것은 F12 '모드'의 선택지 **누수 추적** 하나뿐입니다.
 - 런처 '모드 페이지'용 서버 부품(`SPT_Runtime\user\mods\RamCleanerInterval.Server\`)은 버전 숫자만 바뀌었습니다. 같이 덮어쓰면 됩니다.
 
 ---
@@ -46,6 +47,15 @@
 1. 2판째부터 이 값이 "-1.77GB"처럼 마이너스로 나오는 경우가 있었습니다. 비교 기준이 '레이드 로딩 시작 때'라서, 로딩 중 잠깐 생긴 메모리까지 기준에 들어갔기 때문입니다.
 2. 이제 2판째부터는 **지난 판이 끝나고 정리한 뒤의 값**과 비교합니다. 판마다 실제로 쌓이는 양이 제대로 보입니다(보고서에는 "지난 판 정리 뒤보다 +0.99GB"처럼 표시).
 
+- **새 모드 '누수 추적'**
+
+1. 전에는 집중 분석을 골라도 '06. 누수 추적'과 '11. 모드별 오브젝트 증가'는 꺼져 있었습니다. 몇 분마다 0.2~1초씩 끊기는 기능이라, 끊김 원인을 재는 집중 분석에 넣으면 측정이 흐려지기 때문입니다. 그래서 판마다 메모리가 쌓이는 원인을 찾으려면 F12에서 따로 켜야 했습니다.
+2. 이제 F12 '모드'에서 **누수 추적**을 고르면 메모리 원인 찾기에 필요한 것만 한 번에 켭니다.
+   - 켬: 간단 확인 전부, 모드별 메모리 생성량(몇 분마다 측정), 06 누수 추적, 11 모드별 오브젝트 증가, [실험] 무거운 아이템 찾기, 로그 60초 간격
+   - 끔: 끊김 원인 모드 추적, 끊김 알림, 화면의 모드별 부하 막대(누수 추적 자체가 짧게 끊기므로)
+3. 쓰는 법: 메인 메뉴에서 모드를 **누수 추적**으로 바꿈 → 같은 맵 2판 → `BepInEx\RamCleaner\` 최신 로그와 세션 보고서를 보내 주세요. 로그의 `[leak]`·`[mod objects]` 줄에 무엇이 늘었는지 나옵니다.
+4. 다 찾았으면 원래 모드로 돌아가세요. 다른 모드를 고르면 06·11은 다시 꺼집니다.
+
 - **알려진 문제 / 주의**
 
 1. 이번 변경은 빌드와 테스트 환경(브라우저·Mono)에서만 확인했고, **실제 게임에서는 아직 확인하지 못했습니다.**
@@ -65,17 +75,18 @@
 # RAM Cleaner (RamCleanerInterval-zzap--Bootleg-) v2.13.0 release notes (vs v2.12.0)
 
 > Original: CactusPie — SPT-RamCleanerInterval (GPL-3.0). This is an unofficial SPT 4.1 port; please don't contact the original author about it.
-> A small update that makes the **session report easier to follow**. It fixes three user reports and one miscalculation found in a log.
+> A small update that makes the **session report easier to follow**. It fixes three user reports and one miscalculation found in a log, and adds a mode for hunting memory that piles up.
 
 **At a glance**
 
 1. **Report refreshes itself** — the web page's session report updates every 10 s during a raid. No more F5.
 2. **History tab** — the raids of earlier game sessions stay viewable on the web page after you restart the game.
 3. **Raids cut short are kept** — closing the game with Alt+F4 mid-raid, or a crash, no longer wipes that raid from the report.
+4. **New mode "Leak hunt"** — one pick in the F12 "Mode" turns on what you need to find memory that piles up raid after raid.
 
 **Install**
 
-- Extract the zip **straight into your SPT folder (e.g. `E:\SPT 4.1`)** and overwrite. Same locations and F12 settings as v2.12.0; no new F12 entries.
+- Extract the zip **straight into your SPT folder (e.g. `E:\SPT 4.1`)** and overwrite. Same locations and F12 settings as v2.12.0; the only new thing is the **Leak hunt** choice in the F12 "Mode".
 - The optional server part for the launcher's mod pages (`SPT_Runtime\user\mods\RamCleanerInterval.Server\`) only changed its version number. Overwrite it as well.
 
 ---
@@ -109,6 +120,15 @@
 
 1. From the second raid on this could read negative, e.g. "-1.77 GB". It was compared with the heap at raid loading, which already held that load's temporary memory.
 2. From the second raid it is now compared with the heap after the previous raid's cleanup, so what really piles up per raid shows (the report says e.g. "+0.99 GB vs after the last raid's cleanup").
+
+- **New mode "Leak hunt"**
+
+1. Before, deep analysis left "06. Leak tracker" and "11. Mod object growth" off: they hitch for 0.2–1 s every few minutes, which would blur deep analysis's stutter-cause measuring. So hunting memory that piles up meant switching them on by hand in F12.
+2. Now picking **Leak hunt** in the F12 "Mode" turns on just what that hunt needs.
+   - On: everything in quick view, memory created per mod (sampled every few minutes), 06 leak tracker, 11 mod object growth, the [experimental] heavy item finder, log every 60 s
+   - Off: stutter-cause tracking per mod, stutter notifications, the per-mod cost bars on screen (the leak tracker's own snapshots hitch briefly)
+3. How to use it: switch the mode to **Leak hunt** in the main menu → two raids on the same map → send the newest log in `BepInEx\RamCleaner\` and the session report. The `[leak]` and `[mod objects]` lines show what grew.
+4. Switch back when you're done. Picking another mode turns 06 and 11 off again.
 
 - **Known issues / notes**
 

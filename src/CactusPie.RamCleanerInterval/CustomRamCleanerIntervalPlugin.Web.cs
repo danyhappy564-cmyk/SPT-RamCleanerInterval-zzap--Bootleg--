@@ -702,6 +702,7 @@ namespace CactusPie.RamCleanerInterval
                 case PresetAuto: return Loc.L("자동 정리", "Auto cleanup");
                 case PresetQuick: return Loc.L("간단 확인", "Quick view");
                 case PresetDeep: return Loc.L("집중 분석", "Deep analysis");
+                case PresetLeak: return Loc.L("누수 추적", "Leak hunt");
                 default: return Loc.L("직접 설정", "Custom") + (_diagMode.Value ? Loc.L(" + 원인 추적", " + diagnostics") : string.Empty);
             }
         }

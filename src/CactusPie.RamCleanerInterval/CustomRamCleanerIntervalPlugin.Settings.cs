@@ -60,6 +60,7 @@ namespace CactusPie.RamCleanerInterval
         private const string PresetAuto = "자동 정리 · Auto cleanup";
         private const string PresetQuick = "간단 확인 · Quick view";
         private const string PresetDeep = "집중 분석 · Deep analysis";
+        private const string PresetLeak = "누수 추적 · Leak hunt";
 
         private ConfigEntry<string> _language;
         private ConfigEntry<string> _preset;
@@ -217,9 +218,11 @@ namespace CactusPie.RamCleanerInterval
                 "• 간단 확인 — 자동 정리 + 왼쪽 위 화면 표시(메모리·FPS·서버·여유 예상), 끊김 횟수, 레이드 결산, 세션 보고서. 아주 가벼움.\n" +
                 "• 집중 분석 — 전부 켬: 모드별 부하 상시 측정, 끊김 원인 모드 추적, 원인 추적 로그, [실험] 무거운 아이템 찾기. " +
                 "프레임당 0.1~0.5ms 정도 더 들고 로그가 많이 쌓이니 문제를 찾는 동안만 쓰고 돌아오세요.\n" +
+                "• 누수 추적 — 판마다 메모리가 쌓이는 원인 찾기: 간단 확인 + 모드별 메모리 생성량, '06. 누수 추적', '11. 모드별 오브젝트 증가', [실험] 무거운 아이템 찾기. " +
+                "끊김 원인 추적은 끕니다. 몇 분마다 0.2~1초 끊길 수 있으니 같은 맵 2판 정도만 돌리고 돌아오세요.\n" +
                 "• 직접 설정 — 지금 설정을 그대로 둡니다.\n" +
                 "참고: 집중 분석에서 다른 모드로 바꿀 때 '모드별 부하 분석'의 측정 장치는 게임을 다시 켜야 완전히 빠집니다(그 전까지는 측정만 멈춤).",
-                new AcceptableValueList<string>(PresetCustom, PresetAuto, PresetQuick, PresetDeep), 99);
+                new AcceptableValueList<string>(PresetCustom, PresetAuto, PresetQuick, PresetDeep, PresetLeak), 99);
         }
 
         /// <summary>Rewrites what F12 shows (category, name, description) for the chosen language. F12 picks it up when reopened.</summary>
@@ -245,12 +248,13 @@ namespace CactusPie.RamCleanerInterval
             bool auto = preset == PresetAuto;
             bool quick = preset == PresetQuick;
             bool deep = preset == PresetDeep;
-            if (!auto && !quick && !deep)
+            bool leak = preset == PresetLeak;
+            if (!auto && !quick && !deep && !leak)
             {
                 return;
             }
 
-            bool view = quick || deep;
+            bool view = quick || deep || leak;
 
             // Cleaning + safety: the same in every mode.
             _gcEnabled.Value = true;
@@ -263,8 +267,6 @@ namespace CactusPie.RamCleanerInterval
             _forecastEnabled.Value = true;
             _forecastNotify.Value = true;
             _restartNotify.Value = true;
-            _leakEnabled.Value = false;
-            _objectsEnabled.Value = false;
             _diagHeavy.Value = false;
 
             // What is measured, shown and logged.
@@ -276,7 +278,7 @@ namespace CactusPie.RamCleanerInterval
             _overlayMem.Value = true;
             _overlayMods.Value = deep;
             _hitchEnabled.Value = view;
-            _hitchNotify.Value = view;
+            _hitchNotify.Value = quick || deep; // leak hunt: its own snapshots hitch, don't nag about them
             _hitchModTracking.Value = deep;
             _reportEnabled.Value = view;
             _reportNotify.Value = view;
@@ -286,12 +288,16 @@ namespace CactusPie.RamCleanerInterval
             _memSuspectNotify.Value = view;
             _serverEnabled.Value = view;
             _sessionReportEnabled.Value = view;
-            _profilerEnabled.Value = deep;
+            _profilerEnabled.Value = deep || leak; // leak hunt: needed for MB/min per mod, sampled (not continuous)
             _profilerContinuous.Value = deep;
-            _heavyEnabled.Value = deep;
+            _heavyEnabled.Value = deep || leak;
             _overlayHeavy.Value = true;
-            _logIntervalSec.Value = auto ? 0 : quick ? 120 : 30;
+            _logIntervalSec.Value = auto ? 0 : quick ? 120 : leak ? 60 : 30;
             _diagMode.Value = deep;
+
+            // Leak hunt: the two snapshot trackers (each hitches 0.2-1 s every few minutes, so never in the others).
+            _leakEnabled.Value = leak;
+            _objectsEnabled.Value = leak;
 
             Logger.LogInfo($"Mode applied: {preset}");
         }
