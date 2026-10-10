@@ -93,7 +93,7 @@
 
 - **알려진 문제 / 주의**
 
-1. 이번 변경은 빌드와 테스트 환경(브라우저·Mono)에서만 확인했고, **실제 게임에서는 아직 확인하지 못했습니다.**
+1. 작성자 PC(RTX 4080 + RTX 4060 듀얼 GPU, Lossless Scaling)에서 실제 레이드로 확인했습니다. 그래픽카드가 한 장이거나 AMD·내장 그래픽인 환경에서는 아직 확인하지 못했습니다.
 2. Alt+F4 때 '닫는 순간 저장'이 됐는지는 `BepInEx\LogOutput.log` 에서 `[report] saved the unfinished raid as the game closed` 줄로 알 수 있습니다. 이 줄이 없어도 1분마다 저장한 기록은 남습니다.
 3. 런처 '모드 페이지'(`/ramcleaner/`)를 거쳐 지난 보고서를 열면 위 메뉴 없이 보고서만 보입니다. 뒤로 가기로 돌아오면 됩니다.
 4. 그 밖의 주의 사항은 v2.12.0 릴리즈 노트와 같습니다.
@@ -202,7 +202,7 @@
 
 - **Known issues / notes**
 
-1. These changes were checked in a build and test setup (browser, Mono) only — **not in the real game yet.**
+1. Checked in real raids on the author's PC (RTX 4080 + RTX 4060 dual GPU, Lossless Scaling). Not yet checked with a single graphics card, AMD or integrated graphics.
 2. Whether the save on Alt+F4 worked shows as the line `[report] saved the unfinished raid as the game closed` in `BepInEx\LogOutput.log`. Without that line the one-minute saves are still there.
 3. Opening a past report through the launcher's mod page (`/ramcleaner/`) shows the report without the menu bar; use Back to return.
 4. Everything else is as in the v2.12.0 release notes.
