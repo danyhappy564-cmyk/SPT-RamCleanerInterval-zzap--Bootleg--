@@ -1204,8 +1204,7 @@ namespace CactusPie.RamCleanerInterval
             }
 
             watch.Stop();
-            _leakFrame = Time.frameCount;
-            _leakMs = watch.Elapsed.TotalMilliseconds;
+            NoteLeakWork(watch.Elapsed.TotalMilliseconds);
         }
 
         private void FinishFpsHistory()
@@ -1487,6 +1486,17 @@ namespace CactusPie.RamCleanerInterval
             RunLeakSnapshot(_leak.Snapshots == 0 ? "baseline" : "interval" + QuietTag());
         }
 
+        /// <summary>
+        /// Records our counting work for the hitch monitor. The leak snapshot and the mod-object count can run in the
+        /// same frame, so the times add up - before, the second (~90 ms) overwrote the first (~1 s) and a 1 s freeze
+        /// was blamed on the game (2026-10-10 log).
+        /// </summary>
+        private void NoteLeakWork(double ms)
+        {
+            _leakMs = _leakFrame == Time.frameCount ? _leakMs + ms : ms;
+            _leakFrame = Time.frameCount;
+        }
+
         private void RunLeakSnapshot(string reason)
         {
             var watch = Stopwatch.StartNew();
@@ -1500,8 +1510,7 @@ namespace CactusPie.RamCleanerInterval
             }
 
             watch.Stop();
-            _leakFrame = Time.frameCount;
-            _leakMs = watch.Elapsed.TotalMilliseconds;
+            NoteLeakWork(watch.Elapsed.TotalMilliseconds);
         }
 
         // ---------------------------------------------------------------- Log / status / UI

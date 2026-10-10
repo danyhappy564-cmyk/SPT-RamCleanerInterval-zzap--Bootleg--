@@ -85,6 +85,11 @@
    - 게임이 다른 카드에 둔 양(화면 복사용, VRAM 숫자에서는 뺌)
 3. **VRAM 경고 기준이 바뀌었습니다.** 게임은 VRAM을 일부러 꽉 채워 쓰기도 해서 %만으로는 넘쳤는지 알 수 없습니다. 실제로 2026-10-10 로그에서는 97~99%가 계속 찍혔지만, 시스템 메모리로 넘친 양('공유')은 최대 0.38GB였습니다.
 4. 이제 **카드 전체 사용량이 기준(95%) 이상이고, 넘친 양이 1GB 이상**일 때만 경고합니다. 새 F12 설정 '09 · **VRAM 넘침 기준 (GB)**'에서 바꿀 수 있고, 0이면 예전처럼 %만 봅니다.
+5. 다른 그래픽카드의 이름과 크기는 Windows가 카드마다 붙이는 고유 번호(LUID)로 찾습니다. 옛 드라이버 흔적이나 내장 그래픽이 있어도 정확히 나옵니다.
+
+- **누수 추적 때 1초 멈춤의 원인 표시 수정**
+
+1. 누수 추적 기록(약 1초)과 모드 오브젝트 세기가 같은 프레임에 돌면 1초 멈춤이 '게임 자체'로 잘못 찍혔습니다. 이제 'RAM 클리너'로 나옵니다. 누수 추적 모드에서 5분마다 약 1초 멈추는 것은 그 모드의 원래 비용입니다.
 
 - **알려진 문제 / 주의**
 
@@ -189,6 +194,11 @@
    - what the game keeps on the other card (frame copies, left out of the VRAM number)
 3. **The VRAM warning changed.** Games may fill VRAM on purpose, so the % alone can't tell whether it overflowed. The 2026-10-10 log read 97–99% all along, yet at most 0.38 GB spilled into system memory ("shared").
 4. It now warns only when **the whole card is at or above the threshold (95%) and at least 1 GB has spilled**. Set it in the new F12 setting "09 · **VRAM spill at (GB)**"; 0 = the % alone, as before.
+5. Other cards' names and sizes are now looked up by the ID Windows gives each card (LUID), so they show even with leftover driver entries or integrated graphics.
+
+- **Leak-hunt 1 s freezes now blamed correctly**
+
+1. When the leak snapshot (~1 s) and the mod-object count ran in the same frame, the freeze was logged as 'the game itself'. It now shows as the RAM cleaner. A ~1 s freeze every 5 minutes is the normal cost of Leak hunt mode.
 
 - **Known issues / notes**
 

@@ -13,8 +13,9 @@ namespace CactusPie.RamCleanerInterval
     /// "GPU Process Memory" (this game only) and "GPU Adapter Memory" (every program on the card).
     /// Counter instances carry the card's LUID ("luid_0x..._0x..._phys_0"), so a second card - e.g. the one running
     /// Lossless Scaling frame generation in a dual-GPU setup - is kept apart instead of being added to the game's card.
-    /// The game's card is the one where this process has the most dedicated memory. Card names and sizes come from the
-    /// display-adapter registry keys (no LUID there, so a name is attached only when it is unambiguous).
+    /// The game's card is the one where this process has the most dedicated memory. Card names and sizes come from
+    /// D3DKMT (gdi32, by LUID - exact); where that is unavailable, from the display-adapter registry keys (no LUID
+    /// there, so a name is attached only when it is unambiguous - stale driver entries or an iGPU made it blank).
     /// Runs on its own background thread every few seconds because enumerating the counter instances can take tens of
     /// milliseconds - never on the game's main thread.
     /// </summary>
@@ -32,6 +33,7 @@ namespace CactusPie.RamCleanerInterval
         private volatile bool _stop;
         private volatile Reading _reading = new Reading();
         private List<KeyValuePair<string, long>> _registryCards;
+        private Dictionary<long, KeyValuePair<string, long>> _adapters; // LUID -> (name, dedicated VRAM bytes)
 
         /// <summary>One measurement. Bytes, -1 = unknown.</summary>
         internal sealed class Reading
@@ -189,6 +191,15 @@ namespace CactusPie.RamCleanerInterval
                     _registryCards = new List<KeyValuePair<string, long>>();
                 }
 
+                try
+                {
+                    _adapters = ReadAdapters();
+                }
+                catch (Exception)
+                {
+                    _adapters = null; // pre-Windows 10 gdi32 / Wine: registry fallback below
+                }
+
                 if (PdhOpenQuery(null, IntPtr.Zero, out query) != 0 ||
                     PdhAddEnglishCounter(query, @"\GPU Process Memory(*)\Dedicated Usage", IntPtr.Zero, out IntPtr dedicated) != 0 ||
                     PdhAddEnglishCounter(query, @"\GPU Process Memory(*)\Shared Usage", IntPtr.Zero, out IntPtr shared) != 0)
@@ -258,6 +269,12 @@ namespace CactusPie.RamCleanerInterval
                 List<KeyValuePair<string, long>> otherCards = cards.Where(kv => kv.Key != gameCard && kv.Value >= MinShownBytes).ToList();
                 foreach (KeyValuePair<string, long> card in otherCards)
                 {
+                    if (_adapters != null && _adapters.TryGetValue(ParseLuid(card.Key), out KeyValuePair<string, long> known))
+                    {
+                        reading.Others.Add(new Gpu { Name = known.Key, Used = card.Value, Total = known.Value > 0 ? known.Value : -1 });
+                        continue;
+                    }
+
                     bool named = otherCards.Count == 1 && spare.Count == 1;
                     reading.Others.Add(new Gpu
                     {
@@ -307,6 +324,165 @@ namespace CactusPie.RamCleanerInterval
                 }
 
                 return result;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        /// <summary>"luid_0x0000ABCD_0x00001234_phys_0" -> LUID as one number (high part &lt;&lt; 32 | low part); 0 if unreadable.</summary>
+        internal static long ParseLuid(string card)
+        {
+            string[] parts = card.Split('_');
+            if (parts.Length < 3 || parts[0] != "luid" ||
+                !TryHex(parts[1], out uint high) || !TryHex(parts[2], out uint low))
+            {
+                return 0;
+            }
+
+            return ((long)high << 32) | low;
+        }
+
+        private static bool TryHex(string text, out uint value)
+        {
+            if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                text = text.Substring(2);
+            }
+
+            return uint.TryParse(text, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out value);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct D3dkmtEnumAdapters2
+        {
+            public uint NumAdapters;
+            public IntPtr Adapters;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct D3dkmtAdapterInfo
+        {
+            public uint Adapter;
+            public uint LuidLow;
+            public int LuidHigh;
+            public uint NumOfSources;
+            public int PrecisePresentRegionsPreferred;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct D3dkmtQueryAdapterInfo
+        {
+            public uint Adapter;
+            public int Type;
+            public IntPtr Data;
+            public uint DataSize;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct D3dkmtCloseAdapter
+        {
+            public uint Adapter;
+        }
+
+        [DllImport("gdi32.dll")]
+        private static extern int D3DKMTEnumAdapters2(ref D3dkmtEnumAdapters2 args);
+
+        [DllImport("gdi32.dll")]
+        private static extern int D3DKMTQueryAdapterInfo(ref D3dkmtQueryAdapterInfo args);
+
+        [DllImport("gdi32.dll")]
+        private static extern int D3DKMTCloseAdapter(ref D3dkmtCloseAdapter args);
+
+        private const int KmtGetSegmentSize = 3;        // D3DKMT_SEGMENTSIZEINFO: dedicated VRAM first (ULONGLONG)
+        private const int KmtAdapterRegistryInfo = 8;   // D3DKMT_ADAPTERREGISTRYINFO: AdapterString[260] first
+        private const int KmtDriverDescription = 65;    // D3DKMT_DRIVER_DESCRIPTION: WCHAR[4096] (Windows 10 1809+)
+
+        /// <summary>
+        /// LUID -> (name, dedicated VRAM bytes) of every graphics adapter, from the kernel graphics API Task Manager
+        /// uses (gdi32 D3DKMT, Windows 10+). Exact per card, unlike the registry. Null when unavailable.
+        /// </summary>
+        private static Dictionary<long, KeyValuePair<string, long>> ReadAdapters()
+        {
+            var args = new D3dkmtEnumAdapters2();
+            if (D3DKMTEnumAdapters2(ref args) != 0 || args.NumAdapters == 0 || args.NumAdapters > 64)
+            {
+                return null;
+            }
+
+            int stride = Marshal.SizeOf(typeof(D3dkmtAdapterInfo));
+            args.Adapters = Marshal.AllocHGlobal(stride * (int)args.NumAdapters);
+            try
+            {
+                if (D3DKMTEnumAdapters2(ref args) != 0)
+                {
+                    return null;
+                }
+
+                var result = new Dictionary<long, KeyValuePair<string, long>>();
+                for (int i = 0; i < args.NumAdapters; i++)
+                {
+                    var info = (D3dkmtAdapterInfo)Marshal.PtrToStructure(new IntPtr(args.Adapters.ToInt64() + i * stride), typeof(D3dkmtAdapterInfo));
+                    try
+                    {
+                        string name = QueryString(info.Adapter, KmtDriverDescription, 4096) ?? QueryString(info.Adapter, KmtAdapterRegistryInfo, 4 * 260);
+                        byte[] segments = Query(info.Adapter, KmtGetSegmentSize, 24);
+                        long vram = segments != null ? BitConverter.ToInt64(segments, 0) : -1;
+                        long luid = ((long)(uint)info.LuidHigh << 32) | info.LuidLow;
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            result[luid] = new KeyValuePair<string, long>(name, vram);
+                        }
+                    }
+                    finally
+                    {
+                        var close = new D3dkmtCloseAdapter { Adapter = info.Adapter };
+                        D3DKMTCloseAdapter(ref close);
+                    }
+                }
+
+                return result;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(args.Adapters);
+            }
+        }
+
+        private static string QueryString(uint adapter, int type, int chars)
+        {
+            byte[] data = Query(adapter, type, chars * 2);
+            if (data == null)
+            {
+                return null;
+            }
+
+            string text = Encoding.Unicode.GetString(data);
+            int end = text.IndexOf('\0');
+            text = (end >= 0 ? text.Substring(0, end) : text).Trim();
+            return text.Length > 0 ? text : null;
+        }
+
+        private static byte[] Query(uint adapter, int type, int bytes)
+        {
+            IntPtr buffer = Marshal.AllocHGlobal(bytes);
+            try
+            {
+                for (int i = 0; i < bytes; i++)
+                {
+                    Marshal.WriteByte(buffer, i, 0);
+                }
+
+                var args = new D3dkmtQueryAdapterInfo { Adapter = adapter, Type = type, Data = buffer, DataSize = (uint)bytes };
+                if (D3DKMTQueryAdapterInfo(ref args) != 0)
+                {
+                    return null;
+                }
+
+                var data = new byte[bytes];
+                Marshal.Copy(buffer, data, 0, bytes);
+                return data;
             }
             finally
             {
