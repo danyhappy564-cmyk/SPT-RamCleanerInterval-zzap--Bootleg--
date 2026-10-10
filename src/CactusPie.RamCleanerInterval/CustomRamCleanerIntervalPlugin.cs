@@ -171,7 +171,7 @@ namespace CactusPie.RamCleanerInterval
             _gc.Finished += OnGcFinished;
             _combat = new CombatTracker();
             _combat.InventoryOpened += () => _evaluateNow = true;
-            _vram = new VramMonitor();
+            _vram = new VramMonitor(SystemInfo.graphicsDeviceName, (long)SystemInfo.graphicsMemorySize * 1024 * 1024);
             _leak = new LeakTracker(Logger);
             _hitch = new HitchMonitor(Logger);
             _report = new RaidReport();
@@ -1420,8 +1420,8 @@ namespace CactusPie.RamCleanerInterval
                 return;
             }
 
-            string warning = _warnings.Evaluate(_snapshot, _inGame ? _vram.Dedicated : -1, _warnCommitPercent.Value,
-                _warnVram.Value, _warnVramPercent.Value, _warnVramSeconds.Value, now);
+            string warning = _warnings.Evaluate(_snapshot, _inGame ? _vram.Last : null, _warnCommitPercent.Value,
+                _warnVram.Value, _warnVramPercent.Value, _warnVramSeconds.Value, _warnVramSpillGb.Value, now);
             if (warning == null)
             {
                 return;
@@ -1527,7 +1527,7 @@ namespace CactusPie.RamCleanerInterval
         {
             return $"mono used {MemoryStats.Gb(s.MonoUsed)} / reserved {MemoryStats.Gb(s.MonoReserved)} GB | " +
                    $"native {MemoryStats.Gb(s.Native)} GB | working set {MemoryStats.Gb(s.WorkingSet)} GB | private {MemoryStats.Gb(s.PrivateBytes)} GB | " +
-                   $"VRAM {MemoryStats.Gb(_vram.Dedicated)} GB (+shared {MemoryStats.Gb(_vram.Shared)}) | " +
+                   $"VRAM {MemoryStats.Gb(_vram.Dedicated)} GB (+shared {MemoryStats.Gb(_vram.Shared)}{_vram.LogText()}) | " +
                    $"system free {MemoryStats.Gb(s.SystemAvailable)}/{MemoryStats.Gb(s.SystemTotal)} GB";
         }
 
@@ -1740,6 +1740,11 @@ namespace CactusPie.RamCleanerInterval
             {
                 sb.Append(Loc.L("전용 ", "dedicated ")).Append(MemoryStats.Gb(vram)).Append(Loc.L(" GB / 공유 ", " GB / shared ")).Append(MemoryStats.Gb(_vram.Shared))
                   .Append(Loc.L(" GB (그래픽카드 ", " GB (graphics card ")).Append((SystemInfo.graphicsMemorySize / 1024f).ToString("0.0")).Append(" GB)\n");
+                string cards = _vram.CardSummary();
+                if (cards.Length > 0)
+                {
+                    sb.Append(cards).Append('\n');
+                }
             }
             else
             {

@@ -117,9 +117,10 @@ namespace CactusPie.RamCleanerInterval
             // 09. Warnings
             ["9. Warnings|Enabled"] = new[] { "Enable memory danger warnings", "Warns when commit memory (RAM + page file limit) is about to run out. Past the limit the game crashes (at most once every 5 minutes)." },
             ["9. Warnings|Commit free below (%)"] = new[] { "Free commit threshold (%)", "Warn when free commit is below this % of the limit or under 2 GB." },
-            ["9. Warnings|VRAM warning"] = new[] { "VRAM full warning", "Warn once per raid when graphics memory (VRAM) stays at or above the threshold below. Textures that don't fit spill into system memory and can cause stutter." },
+            ["9. Warnings|VRAM warning"] = new[] { "VRAM full warning", "Warn once per raid when the graphics memory (VRAM, all programs) of the card the game runs on stays at or above the threshold below and really spills into system memory. Spilled textures can cause stutter. Dual-GPU setups (Lossless Scaling etc.) are counted per card." },
             ["9. Warnings|VRAM full at (%)"] = new[] { "VRAM full at (%)", "VRAM use at or above this % of the card counts as 'full'." },
             ["9. Warnings|VRAM full for (s)"] = new[] { "VRAM full for (s)", "Warn only if it stays full longer than this (brief peaks are ignored)." },
+            ["9. Warnings|VRAM spill at (GB)"] = new[] { "VRAM spill at (GB, 0 = off)", "Counts as full only when the game's 'shared' graphics memory (what didn't fit on the card and went to system RAM) is at least this much. Games may fill VRAM on purpose (preloaded textures), so the % alone can't tell whether it overflowed. 0 = the % alone, as before." },
             ["9. Warnings|In-game notification"] = new[] { "In-game notification", "Show warnings as in-game notifications. Off: log and F12 status only." },
 
             // 10. Profiler

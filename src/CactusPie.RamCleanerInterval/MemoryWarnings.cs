@@ -30,7 +30,7 @@ namespace CactusPie.RamCleanerInterval
         }
 
         /// <summary>Returns a Korean warning to show, or null. Call once per second.</summary>
-        public string Evaluate(MemorySnapshot s, long vramDedicated, int commitPercent, bool vramEnabled, int vramPercent, int vramSeconds, float now)
+        public string Evaluate(MemorySnapshot s, VramMonitor.Reading vram, int commitPercent, bool vramEnabled, int vramPercent, int vramSeconds, float spillGb, float now)
         {
             if (s.CommitLimit > 0)
             {
@@ -47,14 +47,18 @@ namespace CactusPie.RamCleanerInterval
                 }
             }
 
-            long vramTotal = (long)SystemInfo.graphicsMemorySize * 1024 * 1024;
+            // The whole card the game runs on (every program on it, e.g. single-GPU frame generation), else the game alone.
+            long vramTotal = vram != null && vram.CardTotal > 0 ? vram.CardTotal : (long)SystemInfo.graphicsMemorySize * 1024 * 1024;
+            long vramDedicated = vram == null ? -1 : vram.CardUsed > 0 ? vram.CardUsed : vram.Game;
             if (!vramEnabled || vramDedicated <= 0 || vramTotal <= 0)
             {
                 return null;
             }
 
+            // A full card alone isn't a problem (games fill VRAM on purpose); it is once memory spills over into system RAM.
+            long spill = vram.GameShared;
             double vramUsed = vramDedicated * 100.0 / vramTotal;
-            if (vramUsed < vramPercent)
+            if (vramUsed < vramPercent || (spillGb > 0f && spill >= 0 && spill < spillGb * MemoryStats.BytesPerGb))
             {
                 _vramFullSince = -1f;
                 return null;
@@ -72,10 +76,10 @@ namespace CactusPie.RamCleanerInterval
 
             _vramWarnedThisRaid = true;
             return Remember(Loc.L(
-                $"[경고] VRAM 포화: {MemoryStats.Gb(vramDedicated)} / {vramTotal / MemoryStats.BytesPerGb:0.0}GB ({vramUsed:0}%) 상태가 " +
-                $"{vramSeconds}초 넘게 계속됨. 넘친 텍스처는 시스템 메모리로 가서 끊김 원인이 될 수 있습니다 — 텍스처 품질을 한 단계 낮춰 보세요.",
-                $"[Warning] VRAM full: {MemoryStats.Gb(vramDedicated)} / {vramTotal / MemoryStats.BytesPerGb:0.0} GB ({vramUsed:0}%) for more than " +
-                $"{vramSeconds} s. Textures that don't fit spill into system memory and can cause stutter — try one step lower texture quality."));
+                $"[경고] VRAM 넘침: 그래픽카드 {MemoryStats.Gb(vramDedicated)} / {vramTotal / MemoryStats.BytesPerGb:0.0}GB ({vramUsed:0}%), 시스템 메모리로 넘친 양 {MemoryStats.Gb(spill)}GB 상태가 " +
+                $"{vramSeconds}초 넘게 계속됨. 넘친 텍스처는 끊김 원인이 될 수 있습니다 — 텍스처 품질을 한 단계 낮춰 보세요.",
+                $"[Warning] VRAM spilling: card {MemoryStats.Gb(vramDedicated)} / {vramTotal / MemoryStats.BytesPerGb:0.0} GB ({vramUsed:0}%), {MemoryStats.Gb(spill)} GB spilled into system memory for more than " +
+                $"{vramSeconds} s. Spilled textures can cause stutter — try one step lower texture quality."));
         }
 
         private string Remember(string text)

@@ -129,6 +129,7 @@ namespace CactusPie.RamCleanerInterval
         private ConfigEntry<bool> _warnVram;
         private ConfigEntry<int> _warnVramPercent;
         private ConfigEntry<int> _warnVramSeconds;
+        private ConfigEntry<float> _warnVramSpillGb;
         private ConfigEntry<bool> _warnNotify;
 
         private ConfigEntry<bool> _profilerEnabled;
@@ -409,8 +410,8 @@ namespace CactusPie.RamCleanerInterval
                 new AcceptableValueRange<int>(3, 30), 9);
 
             _warnVram = Bind(WarningSection, WarningCategory, "VRAM warning", "VRAM 포화 경고", true,
-                "그래픽카드 메모리(VRAM)가 아래 기준 이상인 상태가 계속되면 레이드마다 한 번 경고합니다. " +
-                "넘친 텍스처는 시스템 메모리로 가서 끊김 원인이 될 수 있습니다.",
+                "게임이 쓰는 그래픽카드의 메모리(VRAM, 모든 프로그램 합계)가 아래 기준 이상이고 실제로 시스템 메모리로 넘친 상태가 계속되면 레이드마다 한 번 경고합니다. " +
+                "넘친 텍스처는 시스템 메모리로 가서 끊김 원인이 될 수 있습니다. 듀얼 GPU(Lossless Scaling 등)는 그래픽카드별로 따로 셉니다.",
                 null, 8);
 
             _warnVramPercent = Bind(WarningSection, WarningCategory, "VRAM full at (%)", "VRAM 포화 기준 (%)", 95,
@@ -420,6 +421,11 @@ namespace CactusPie.RamCleanerInterval
             _warnVramSeconds = Bind(WarningSection, WarningCategory, "VRAM full for (s)", "VRAM 포화 지속 시간 (초)", 120,
                 "포화 상태가 이 시간 넘게 이어져야 경고합니다(잠깐 차는 건 무시).",
                 new AcceptableValueRange<int>(10, 900), 6);
+
+            _warnVramSpillGb = Bind(WarningSection, WarningCategory, "VRAM spill at (GB)", "VRAM 넘침 기준 (GB, 0=확인 안 함)", 1f,
+                "게임의 '공유' 그래픽 메모리(그래픽카드에 못 들어가 시스템 RAM으로 간 양)가 이만큼 이상일 때만 포화로 봅니다. " +
+                "게임은 VRAM을 꽉 채워 쓰기도 해서(텍스처 미리 올림) %만으로는 넘쳤는지 알 수 없습니다. 0이면 옛날처럼 %만 봅니다.",
+                new AcceptableValueRange<float>(0f, 8f), 5);
 
             _warnNotify = Bind(WarningSection, WarningCategory, "In-game notification", "게임 알림으로 표시", true,
                 "경고를 게임 알림으로 띄웁니다. 끄면 로그와 F12 '현재 상태'에만 남습니다.",

@@ -581,8 +581,10 @@ namespace CactusPie.RamCleanerInterval
 
             if (_vram.Dedicated >= 0)
             {
+                string cards = _vram.CardSummary();
                 Tile("VRAM", MemoryStats.Gb(_vram.Dedicated) + " GB",
-                    Loc.L($"그래픽카드 {SystemInfo.graphicsMemorySize / 1024f:0.0} GB · 공유 {MemoryStats.Gb(_vram.Shared)} GB", $"graphics card {SystemInfo.graphicsMemorySize / 1024f:0.0} GB · shared {MemoryStats.Gb(_vram.Shared)} GB"), 0);
+                    Loc.L($"그래픽카드 {SystemInfo.graphicsMemorySize / 1024f:0.0} GB · 공유 {MemoryStats.Gb(_vram.Shared)} GB", $"graphics card {SystemInfo.graphicsMemorySize / 1024f:0.0} GB · shared {MemoryStats.Gb(_vram.Shared)} GB") +
+                    (cards.Length > 0 ? " · " + cards : string.Empty), 0);
             }
 
             if (_serverEnabled.Value)

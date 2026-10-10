@@ -11,6 +11,7 @@
 4. **새 모드 '누수 추적'** — 판마다 메모리가 쌓이는 원인을 찾는 설정을 F12 '모드'에서 한 번에 켭니다.
 5. **Ctrl+F9로 모드 바꾸기** — 누를 때마다 자동 정리 → 간단 확인 → 집중 분석 → 누수 추적 → **꺼짐** 순서로 바뀝니다. F12나 웹 페이지에 들어가지 않아도 됩니다.
 6. **F12 글자 잘림 수정** — '현재 상태'와 버튼이 창 전체 너비를 쓰고, 긴 줄은 줄바꿈됩니다.
+7. **VRAM을 그래픽카드별로** — 듀얼 GPU(Lossless Scaling 등)에서 카드별로 따로 재고, VRAM 경고는 실제로 넘쳤을 때만 뜹니다.
 
 **<설치>**
 
@@ -75,6 +76,16 @@
 2. 이제 이 두 칸은 이름 칸 없이 **창 전체 너비**를 쓰고, 버튼은 세로로 한 줄씩 놓이며, 긴 줄은 줄바꿈합니다. '현재 상태' 맨 위에 지금 모드도 나옵니다.
 3. 왼쪽 이름 칸(약 260px)을 넘던 긴 설정 이름도 줄였습니다. 예: '의심 기준: 레이드 후에도 남는 관리 메모리 (MB)' → '의심 기준: 레이드 후 남는 메모리 (MB)'. 이름만 바뀌고 값은 그대로입니다.
 
+- **VRAM을 그래픽카드별로 재기 (듀얼 GPU·Lossless Scaling) + 경고는 넘쳤을 때만**
+
+1. 전에는 이 게임이 쓰는 VRAM을 모든 그래픽카드에서 더했습니다. 듀얼 GPU(게임은 1번 카드, Lossless Scaling 프레임 생성은 2번 카드)에서는 게임이 2번 카드에 둔 화면 복사용 메모리까지 더해져 숫자가 부풀 수 있었습니다.
+2. 이제 'VRAM'은 **게임이 주로 쓰는 카드만** 셉니다. F12 '현재 상태', 웹 페이지, 로그에 아래가 따로 나옵니다.
+   - 게임 그래픽카드 전체 사용량(모든 프로그램 합계)과 다른 프로그램 몫. 한 카드로 Lossless Scaling을 돌리면 그 몫이 여기 들어갑니다.
+   - 다른 그래픽카드 사용량(Lossless Scaling을 돌리는 카드). 그래픽카드가 둘뿐이면 이름과 용량도 나옵니다.
+   - 게임이 다른 카드에 둔 양(화면 복사용, VRAM 숫자에서는 뺌)
+3. **VRAM 경고 기준이 바뀌었습니다.** 게임은 VRAM을 일부러 꽉 채워 쓰기도 해서 %만으로는 넘쳤는지 알 수 없습니다. 실제로 2026-10-10 로그에서는 97~99%가 계속 찍혔지만, 시스템 메모리로 넘친 양('공유')은 최대 0.38GB였습니다.
+4. 이제 **카드 전체 사용량이 기준(95%) 이상이고, 넘친 양이 1GB 이상**일 때만 경고합니다. 새 F12 설정 '09 · **VRAM 넘침 기준 (GB)**'에서 바꿀 수 있고, 0이면 예전처럼 %만 봅니다.
+
 - **알려진 문제 / 주의**
 
 1. 이번 변경은 빌드와 테스트 환경(브라우저·Mono)에서만 확인했고, **실제 게임에서는 아직 확인하지 못했습니다.**
@@ -104,6 +115,7 @@
 4. **New mode "Leak hunt"** — one pick in the F12 "Mode" turns on what you need to find memory that piles up raid after raid.
 5. **Ctrl+F9 switches the mode** — each press steps auto cleanup → quick view → deep analysis → leak hunt → **off**. No need to open F12 or the web page.
 6. **F12 text no longer cut off** — "Current status" and the buttons use the full window width and long lines wrap.
+7. **VRAM per graphics card** — dual-GPU setups (Lossless Scaling etc.) are measured per card, and the VRAM warning only fires when memory really spills over.
 
 **Install**
 
@@ -167,6 +179,16 @@
 1. F12's "Current status" and "Manual actions" were drawn in the narrow right column (about 270 px); the eight buttons even sat side by side in it, so their labels were cut.
 2. Both now use the **full window width** without the name column, the buttons stack one per line, and long lines wrap. "Current status" also shows the current mode at the top.
 3. Setting names wider than the name column (about 260 px) were shortened, e.g. "Suspect at memory kept after a raid (MB)" → "Suspect: kept after raid (MB)". Only names changed; values are kept.
+
+- **VRAM per graphics card (dual GPU · Lossless Scaling) + warning only on real spill**
+
+1. Before, the game's VRAM was summed over every graphics card. In a dual-GPU setup (game on card 1, Lossless Scaling frame generation on card 2) the frame copies the game keeps on card 2 were added too, which could inflate the number.
+2. "VRAM" now counts **only the card the game mainly uses**. F12 "Current status", the web page and the log also show:
+   - the whole game card's use (all programs) and the other programs' share. Running Lossless Scaling on the same card puts its share here.
+   - the other card's use (the one running Lossless Scaling), with name and size when there are only two cards
+   - what the game keeps on the other card (frame copies, left out of the VRAM number)
+3. **The VRAM warning changed.** Games may fill VRAM on purpose, so the % alone can't tell whether it overflowed. The 2026-10-10 log read 97–99% all along, yet at most 0.38 GB spilled into system memory ("shared").
+4. It now warns only when **the whole card is at or above the threshold (95%) and at least 1 GB has spilled**. Set it in the new F12 setting "09 · **VRAM spill at (GB)**"; 0 = the % alone, as before.
 
 - **Known issues / notes**
 
