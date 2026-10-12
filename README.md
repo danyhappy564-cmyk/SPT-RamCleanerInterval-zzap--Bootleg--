@@ -1,12 +1,16 @@
 ### ⚠️ IMPORTANT NOTICE / DISCLAIMER
 
-**Original Author:** CactusPie
-**Original Repository:** SPT-RamCleanerInterval
-**Original Link:** https://github.com/CactusPie/SPT-RamCleanerInterval
-**License:** GNU GPL v3.0 (see `LICENSE`) — this port stays under the same license.
-**Merged Feature Author:** matsix — SPTVRAMCleaner (https://github.com/matsixx/SPTVRAMCleaner), GNU GPL v3.0.
-The "raid start asset unload" feature is based on that mod and reworked here.
-**This Port By:** R_F (danyhappy564-cmyk) — unofficial, AI-assisted port. Not affiliated with or endorsed by the original author.
+**Original Works:**
+
+1. **CactusPie** — SPT-RamCleanerInterval
+   - Repository: [CactusPie/SPT-RamCleanerInterval](https://github.com/CactusPie/SPT-RamCleanerInterval)
+   - License: GNU GPL v3.0 (see `LICENSE`) — this port stays under the same license.
+2. **matsix** — SPTVRAMCleaner (Merged Feature Author)
+   - Repository: [matsixx/SPTVRAMCleaner](https://github.com/matsixx/SPTVRAMCleaner)
+   - License: GNU GPL v3.0.
+   - The "raid start asset unload" feature is based on that mod and reworked here.
+
+- **This Port By:** R_F (danyhappy564-cmyk) — unofficial, AI-assisted port. Not affiliated with or endorsed by the original author.
 
 1. **Reflection & Take-Downs:** I deeply reflect on the ECOT incident. As an AI-assisted "vibe coder," I will immediately delete files if the original authors ask.
 2. **No Re-Distribution:** These ported builds are unverified, temporary fixes. Please do NOT re-upload or share them anywhere else.
@@ -18,6 +22,7 @@ The "raid start asset unload" feature is based on that mod and reworked here.
 
 ## 변경 이력
 
+- 2026-10-13 04:38 — README 맨 위 원작자 표기를 한 줄씩 나눠 보기 쉽게 정리 (내용 변화 없음)
 - 2026-10-10 21:51 (KST) — **v2.13.0 릴리즈 준비:** 릴리즈 노트를 GitHub용(`changelog/RELEASE_NOTES_v2.13.0.md`, 한/영)과 아카라이브용(`changelog/RELEASE_NOTES_v2.13.0_arca.txt`, 붙여넣기용 일반 텍스트)으로 나눔. 실제 게임 확인 범위(4080+4060 듀얼 GPU PC) 반영.
 
 - 2026-10-10 21:12 (KST) — **v2.13.0: 누수 추적 때 1초 멈춤이 '게임 탓'으로 잘못 찍히던 문제 + 두 번째 그래픽카드 이름이 안 나오던 문제**
