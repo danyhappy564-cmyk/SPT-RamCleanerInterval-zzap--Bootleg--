@@ -398,6 +398,23 @@ namespace CactusPie.RamCleanerInterval
                 string warning = Loc.L($"레이드가 끝났는데도 관리 메모리 {MemoryStats.Gb(kept)}GB가 안 풀림 — 어떤 모드가 지난 레이드 데이터를 붙잡고 있음. ", $"{MemoryStats.Gb(kept)} GB of managed memory still not freed after the raid — some mod is holding on to the last raid's data. ") +
                                  Loc.L("레이드를 반복할수록 쌓이니 긴 세션이면 가끔 게임 재시작을 권장", "It piles up raid after raid, so restart the game now and then in long sessions");
                 _keptAfterRaid += Loc.L(" (의심)", " (suspect)");
+                // Name the holder: static fields of mods still pointing at the destroyed raid (menu, right after the GC)
+                try
+                {
+                    var holders = LeakHolderScan.Run();
+                    Logger.LogWarning($"[leak holders] {LeakHolderScan.Describe(holders, 12)}");
+                    string mods = LeakHolderScan.Mods(holders, 3);
+                    if (mods.Length > 0)
+                    {
+                        warning += Loc.L($" — 지난 레이드 오브젝트를 붙잡은 모드: {mods}", $" — mods holding last raid's objects: {mods}");
+                        _keptAfterRaid += $" [{mods}]";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning($"[leak holders] scan failed: {ex.Message}");
+                }
+
                 Logger.LogWarning($"[mem suspect] {warning}");
                 if (_memSuspectNotify.Value)
                 {
