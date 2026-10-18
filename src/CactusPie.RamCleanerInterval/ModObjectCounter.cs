@@ -26,6 +26,16 @@ namespace CactusPie.RamCleanerInterval
 
         public string Suspect { get; private set; }
 
+        internal struct Growth
+        {
+            public string Mod;
+            public int Delta;
+            public int Count;
+        }
+
+        /// <summary>Mods whose component count grew since the raid's baseline, at the last snapshot (for <see cref="LeakCulprits"/>).</summary>
+        public List<Growth> LastGrowth { get; private set; } = new List<Growth>();
+
         private string _lastSummary;
 
         public string LastSummary { get => _lastSummary ?? Loc.L("아직 없음", "none yet"); private set => _lastSummary = value; }
@@ -34,6 +44,7 @@ namespace CactusPie.RamCleanerInterval
         {
             _baseline = null;
             Suspect = null;
+            LastGrowth = new List<Growth>();
         }
 
         public long Snapshot(int suspectGrowth)
@@ -78,6 +89,7 @@ namespace CactusPie.RamCleanerInterval
                 .Where(x => x.Delta > 0)
                 .OrderByDescending(x => x.Delta)
                 .ToList();
+            LastGrowth = growth.Select(x => new Growth { Mod = ModRegistry.Name(x.Mod), Delta = x.Delta, Count = x.Count }).ToList();
 
             Suspect = growth.Count > 0 && growth[0].Delta >= suspectGrowth
                 ? Loc.L($"{ModRegistry.Name(growth[0].Mod)} — 레이드 중 컴포넌트 +{growth[0].Delta}개 (지금 {growth[0].Count}개)",

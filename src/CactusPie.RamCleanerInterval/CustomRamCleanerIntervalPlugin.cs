@@ -54,6 +54,7 @@ namespace CactusPie.RamCleanerInterval
 
         private ModCostProfiler _profiler;
         private ModObjectCounter _objects;
+        private readonly LeakCulprits _culprits = new LeakCulprits();
         private FrameStats _frames;
         private PerformanceHistory _history;
         private ServerMonitor _server;
@@ -394,26 +395,45 @@ namespace CactusPie.RamCleanerInterval
                         $"{DateTime.Now:HH:mm} managed memory {sign}{MemoryStats.Gb(kept)} GB vs before the raid");
             Logger.LogInfo($"[after raid] managed heap after GC {MemoryStats.Gb(_gc.LastUsedAfter)} GB vs {MemoryStats.Gb(baseline)} GB " +
                            (sinceCleanup ? "after the last raid's cleanup" : "before the raid") + $" ({(kept >= 0 ? "+" : "")}{MemoryStats.Gb(kept)} GB kept)");
-            if (kept >= (long)(_keptAfterRaidSuspectMb.Value * 1024L * 1024L))
+            bool keptSuspect = kept >= (long)(_keptAfterRaidSuspectMb.Value * 1024L * 1024L);
+            // Name the holder: static fields of mods still pointing at the destroyed raid (menu, right after the GC).
+            // When too much was kept, and in leak hunt after every raid (the culprit list wants every raid's answer).
+            string holderMods = string.Empty;
+            if (keptSuspect || LeakHunt)
             {
-                string warning = Loc.L($"레이드가 끝났는데도 관리 메모리 {MemoryStats.Gb(kept)}GB가 안 풀림 — 어떤 모드가 지난 레이드 데이터를 붙잡고 있음. ", $"{MemoryStats.Gb(kept)} GB of managed memory still not freed after the raid — some mod is holding on to the last raid's data. ") +
-                                 Loc.L("레이드를 반복할수록 쌓이니 긴 세션이면 가끔 게임 재시작을 권장", "It piles up raid after raid, so restart the game now and then in long sessions");
-                _keptAfterRaid += Loc.L(" (의심)", " (suspect)");
-                // Name the holder: static fields of mods still pointing at the destroyed raid (menu, right after the GC)
                 try
                 {
                     var holders = LeakHolderScan.Run();
                     Logger.LogWarning($"[leak holders] {LeakHolderScan.Describe(holders, 12)}");
-                    string mods = LeakHolderScan.Mods(holders, 3);
-                    if (mods.Length > 0)
+                    holderMods = LeakHolderScan.Mods(holders, 3);
+                    _culprits.AddHolderScan(holders);
+                    UpdateCulpritReport();
+                    if (LeakHunt)
                     {
-                        warning += Loc.L($" — 지난 레이드 오브젝트를 붙잡은 모드: {mods}", $" — mods holding last raid's objects: {mods}");
-                        _keptAfterRaid += $" [{mods}]";
+                        // The answer leak hunt is for, right after each raid (the warning below adds the kept GB when it is high).
+                        string culprits = CulpritSummary(3);
+                        Logger.LogWarning($"[leak culprits] {culprits}");
+                        if (_memSuspectNotify.Value && !keptSuspect)
+                        {
+                            Notify(Loc.L("누수 추적 — 범인 후보: ", "Leak hunt — culprits: ") + culprits, false);
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
                     Logger.LogWarning($"[leak holders] scan failed: {ex.Message}");
+                }
+            }
+
+            if (keptSuspect)
+            {
+                string warning = Loc.L($"레이드가 끝났는데도 관리 메모리 {MemoryStats.Gb(kept)}GB가 안 풀림 — 어떤 모드가 지난 레이드 데이터를 붙잡고 있음. ", $"{MemoryStats.Gb(kept)} GB of managed memory still not freed after the raid — some mod is holding on to the last raid's data. ") +
+                                 Loc.L("레이드를 반복할수록 쌓이니 긴 세션이면 가끔 게임 재시작을 권장", "It piles up raid after raid, so restart the game now and then in long sessions");
+                _keptAfterRaid += Loc.L(" (의심)", " (suspect)");
+                if (holderMods.Length > 0)
+                {
+                    warning += Loc.L($" — 지난 레이드 오브젝트를 붙잡은 모드: {holderMods}", $" — mods holding last raid's objects: {holderMods}");
+                    _keptAfterRaid += $" [{holderMods}]";
                 }
 
                 Logger.LogWarning($"[mem suspect] {warning}");
@@ -1215,6 +1235,7 @@ namespace CactusPie.RamCleanerInterval
             try
             {
                 _objects.Snapshot(_objectsSuspectGrowth.Value);
+                _culprits.AddObjectGrowth(_objects.LastGrowth, _objectsSuspectGrowth.Value);
             }
             catch (Exception ex)
             {
@@ -1269,6 +1290,9 @@ namespace CactusPie.RamCleanerInterval
         private bool LeakOn => _leakEnabled.Value || (_diagMode.Value && _diagHeavy.Value);
 
         private bool ObjectsOn => _objectsEnabled.Value || (_diagMode.Value && _diagHeavy.Value);
+
+        /// <summary>Leak hunting (the "leak hunt" mode, or either snapshot tracker on): show the culprit list, scan holders after every raid.</summary>
+        private bool LeakHunt => LeakOn || ObjectsOn;
 
         // ---------------------------------------------------------------- Diagnostic mode (one key / one button)
 
@@ -1417,6 +1441,13 @@ namespace CactusPie.RamCleanerInterval
 
             _report.End(_hitch, _frames.AverageFps, _frames.OnePercentLowFps(), _profiler.Suspect ?? _hitch.Suspect ?? (_memSuspects.Count > 0 ? _memSuspects[0] : null),
                 out string logLine, out string notification);
+            if (LeakHunt)
+            {
+                string culprits = CulpritSummary(2);
+                notification += Loc.L("\n누수 범인 후보: ", "\nleak culprits: ") + culprits;
+                logLine += " | leak culprits: " + culprits;
+            }
+
             _lastReport = _report.LastSummaryKorean;
             if (!_reportEnabled.Value)
             {
@@ -1637,6 +1668,7 @@ namespace CactusPie.RamCleanerInterval
         /// <summary>Collects every memory suspect into _memSuspects (Korean, one line each). Called once per second.</summary>
         private void EvaluateMemorySuspects()
         {
+            FeedCulprits();
             _memSuspects.Clear();
             if (!_inGame || !_memSuspectEnabled.Value)
             {
@@ -1927,6 +1959,24 @@ namespace CactusPie.RamCleanerInterval
                 sb.Append("-> ").Append(suspectLine).Append('\n');
             }
 
+            if (LeakHunt || _culprits.Any)
+            {
+                List<LeakCulprits.Row> culprits = CulpritRows();
+                sb.Append(Loc.L("누수 범인 후보: ", "leak culprits: "));
+                if (culprits.Count == 0)
+                {
+                    sb.Append(_culprits.EmptyText).Append('\n');
+                }
+                else
+                {
+                    sb.Append('\n');
+                    for (int i = 0; i < System.Math.Min(5, culprits.Count); i++)
+                    {
+                        sb.Append($"  {i + 1}. {culprits[i].Mod} [{culprits[i].Verdict}] {culprits[i].Evidence}\n");
+                    }
+                }
+            }
+
             if (ObjectsOn)
             {
                 sb.Append(Loc.L("모드별 오브젝트: ", "per-mod objects: ")).Append(_objects.LastSummary).Append('\n');
@@ -2072,6 +2122,31 @@ namespace CactusPie.RamCleanerInterval
             for (int i = 0; i < _memSuspects.Count; i++)
             {
                 _panel.Text(_memSuspects[i], OverlayPanel.Red);
+            }
+
+            // --- leak culprits (leak hunt)
+            if (LeakHunt)
+            {
+                List<LeakCulprits.Row> rows = CulpritRows();
+                _panel.Header(Loc.L("누수 범인 후보 (누수 추적)", "Leak culprits (leak hunt)"), OverlayPanel.Red,
+                    Loc.L($"레이드 후 검사 {_culprits.Scans}회", $"{_culprits.Scans} after-raid check(s)"));
+                if (rows.Count == 0)
+                {
+                    _panel.Text(_culprits.EmptyText, OverlayPanel.Dim);
+                }
+                else
+                {
+                    double best = Math.Max(1.0, rows[0].Score);
+                    for (int i = 0; i < Math.Min(_overlayModCount.Value, rows.Count); i++)
+                    {
+                        LeakCulprits.Row row = rows[i];
+                        Color color = row.Level == LeakCulprits.Level.Holding ? OverlayPanel.Red
+                            : row.Level == LeakCulprits.Level.Suspect ? OverlayPanel.Yellow
+                            : row.Level == LeakCulprits.Level.Hint ? OverlayPanel.Blue : OverlayPanel.Gray;
+                        _panel.Bar($"{i + 1}. {row.Mod}", (float)(row.Score / best), row.Verdict, color);
+                        _panel.Text("   " + row.Short, OverlayPanel.Dim);
+                    }
+                }
             }
 
             // --- frames

@@ -50,6 +50,7 @@ namespace CactusPie.RamCleanerInterval
                 "• Deep analysis — everything on: per-mod frame cost measured all the time, stutter causes per mod, the diagnostic log and the [experimental] heavy item finder. " +
                 "Costs about 0.1–0.5 ms per frame and writes a lot to the log — use it while hunting a problem, then go back.\n" +
                 "• Leak hunt — finds what piles up raid after raid: quick view + memory created per mod, '06. Leak tracker', '11. Mod object growth' and the [experimental] heavy item finder. " +
+                "After every raid it checks in the menu which mod still holds that raid (up to 4 s), and ranks the evidence as leak culprits in the top-left overlay, at the top of the session report and in the raid report notice. " +
                 "Stutter-cause tracking stays off. May hitch 0.2–1 s every few minutes, so run about two raids on the same map, then go back.\n" +
                 "• Off — this mod does nothing: automatic cleanup, warnings, overlay and measuring all stop (the plain game). Only the web page and the hotkey stay.\n" +
                 "In game, Ctrl+F9 ('Mode hotkey') steps through auto cleanup → quick view → deep analysis → leak hunt → off.\n" +

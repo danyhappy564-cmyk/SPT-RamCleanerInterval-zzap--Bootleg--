@@ -28,6 +28,9 @@ namespace CactusPie.RamCleanerInterval
         private readonly object _fileLock = new object();
         private List<HeavyItemTracker.Stat> _heavyMods;
         private List<HeavyItemTracker.Stat> _heavyBundles;
+        private List<LeakCulprits.Row> _culprits;
+        private string _culpritsEmpty;
+        private int _culpritScans;
 
         public sealed class Raid
         {
@@ -134,6 +137,14 @@ namespace CactusPie.RamCleanerInterval
             last.Kept = kept;
             last.Restart = restart;
             Write();
+        }
+
+        /// <summary>The leak culprit list to show at the top (null = section left out, empty = "no evidence yet").</summary>
+        public void SetCulprits(List<LeakCulprits.Row> rows, string emptyText, int scans)
+        {
+            _culprits = rows;
+            _culpritsEmpty = emptyText;
+            _culpritScans = scans;
         }
 
         /// <summary>Experimental heavy-item ranking to include (null/empty = section left out).</summary>
@@ -268,6 +279,7 @@ namespace CactusPie.RamCleanerInterval
             sb.Append($"<h1>{title}</h1><p class=\"sub\">" +
                       Loc.L($"세션 시작 {_sessionStart:yyyy-MM-dd HH:mm} · 레이드 {_raids.Count}판" + (live != null ? " + 진행 중 1판" : string.Empty) + $" · 마지막 갱신 {DateTime.Now:HH:mm:ss}",
                             $"session started {_sessionStart:yyyy-MM-dd HH:mm} · {_raids.Count} raids" + (live != null ? " + 1 in progress" : string.Empty) + $" · updated {DateTime.Now:HH:mm:ss}") + "</p>");
+            AppendCulprits(sb);
             if (raids.Count == 0)
             {
                 sb.Append("<section class=\"card\"><p>").Append(Loc.L("아직 기록된 레이드가 없습니다. 레이드를 시작하면 여기에 진행 중인 레이드가 나오고, 끝나면 요약이 쌓입니다.",
@@ -432,6 +444,44 @@ namespace CactusPie.RamCleanerInterval
                 "Details: the dedicated log in BepInEx\\RamCleaner\\ and the RAM cleaner lines in BepInEx\\LogOutput.log")).Append("</p>");
             sb.Append("<div id=\"tip\" role=\"tooltip\"></div></main><script>").Append(Js).Append("</script></body></html>");
             return sb.ToString();
+        }
+
+        /// <summary>"Which mod is leaking" — first on the page, since that is the question in leak hunt.</summary>
+        private void AppendCulprits(StringBuilder sb)
+        {
+            List<LeakCulprits.Row> rows = _culprits;
+            if (rows == null)
+            {
+                return;
+            }
+
+            sb.Append("<section class=\"card\"><h2>").Append(Loc.L("누수 범인 후보 (누수 추적)", "Leak culprits (leak hunt)")).Append("</h2><p class=\"sub\">")
+              .Append(E(Loc.L($"이번 세션 전체 기준, 근거가 강한 순서입니다(레이드 후 검사 {_culpritScans}회). " +
+                              "누수 확실 = 레이드가 끝난 뒤에도 그 모드가 지난 레이드의 물체를 붙잡고 있음(게임을 끌 때까지 메모리가 안 풀림). " +
+                              "누수 의심 = 레이드 중 그 모드의 오브젝트나 메모리 생성이 계속 늘어남. 참고 = 메모리를 많이 만들거나(대부분 곧 치워짐) 봇 장비 아이템이 많음(누수 아님). " +
+                              "같은 맵으로 2판 이상 돌린 뒤 보는 게 정확합니다. 확실/의심인 모드는 빼고 한 판 더 돌려 비교해 보세요.",
+                              $"Whole session, strongest evidence first ({_culpritScans} after-raid check(s)). " +
+                              "Leaking = after the raid ended the mod still held that raid's objects (that memory stays until the game closes). " +
+                              "Suspect = the mod's objects or memory creation kept growing during a raid. Hint/info = creates a lot of memory (mostly cleaned up soon) or has many bot gear items (not a leak). " +
+                              "Most reliable after two or more raids on the same map. Try one raid without a leaking/suspect mod and compare.")))
+              .Append("</p>");
+            if (rows.Count == 0)
+            {
+                sb.Append("<p>").Append(E(_culpritsEmpty ?? string.Empty)).Append("</p></section>");
+                return;
+            }
+
+            sb.Append(Loc.L("<div class=\"scroll\"><table><thead><tr><th>#</th><th>모드</th><th>판정</th><th>근거</th></tr></thead><tbody>",
+                            "<div class=\"scroll\"><table><thead><tr><th>#</th><th>mod</th><th>verdict</th><th>evidence</th></tr></thead><tbody>"));
+            for (int i = 0; i < rows.Count && i < 12; i++)
+            {
+                LeakCulprits.Row row = rows[i];
+                string style = row.Level == LeakCulprits.Level.Holding ? " style=\"color:#e5534b;font-weight:600\""
+                    : row.Level == LeakCulprits.Level.Suspect ? " style=\"color:#c69026;font-weight:600\"" : string.Empty;
+                sb.Append($"<tr><td>{i + 1}</td><td>{E(row.Mod)}</td><td{style}>{E(row.Verdict)}</td><td>{E(row.Evidence)}</td></tr>");
+            }
+
+            sb.Append("</tbody></table></div></section>");
         }
 
         private static string Series(string name, int slot, IEnumerable<double> values)
