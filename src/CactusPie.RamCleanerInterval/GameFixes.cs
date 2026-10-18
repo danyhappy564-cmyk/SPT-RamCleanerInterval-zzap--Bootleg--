@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -12,7 +13,7 @@ namespace CactusPie.RamCleanerInterval
     /// "19. Game memory fixes": three spots where the game itself keeps memory it no longer needs, or makes garbage every
     /// frame for nothing. Each one keeps the game's behaviour. Patched once at start; each patch checks its setting, so
     /// switching one off in F12 takes effect at once. A patch whose target is missing (another game build) is skipped and
-    /// logged, the others still work. Ideas from Smoothie (TominoCZ), written anew and checked against the 4.1 client.
+    /// logged, the others still work. Inspired by Smoothie (TominoCZ); written for this mod from the 4.1 client's own code.
     /// </summary>
     internal static class GameFixes
     {
@@ -28,7 +29,7 @@ namespace CactusPie.RamCleanerInterval
             Patch(harmony, "bot spawn data after raid", AccessTools.Method(typeof(GlobalEventDispatcher), nameof(GlobalEventDispatcher.Stop)),
                 postfix: nameof(DispatcherStopPostfix));
             Patch(harmony, "dead bot brains", AccessTools.Method(typeof(AICoreController), nameof(AICoreController.Update)),
-                prefix: nameof(AiUpdatePrefix));
+                postfix: nameof(AiUpdatePostfix));
             Patch(harmony, "per-bot coroutine", AccessTools.Method(typeof(ProceduralWeaponAnimation), nameof(ProceduralWeaponAnimation.StartFovCoroutine)),
                 prefix: nameof(FovCoroutinePrefix));
         }
@@ -66,11 +67,12 @@ namespace CactusPie.RamCleanerInterval
 
         // ---------------------------------------------------------------- bot spawn data after raid
 
-        // Every spawn attempt (BotCreationData, with its bots' whole profiles) and every raid's SpawnDelaysService subscribe
-        // to GlobalEventDispatcher.OnStopBotSpawn. The dispatcher lives as long as the game, nothing in the game calls
-        // StopBotSpawn(), and its Stop() at raid end (BotsController.Stop) clears all its other events but not this one:
-        // every raid's spawn data stayed referenced until the game was closed. Cleared at that Stop() - after the raid,
-        // so nothing in a raid changes.
+        // Checked in Assembly-CSharp 4.1: the BotCreationData constructor and the SpawnDelaysService constructor both add a
+        // handler to GlobalEventDispatcher.OnStopBotSpawn. The dispatcher is created once (BaseLocalGame, "if not
+        // Instantiated") and kept for the whole session, StopBotSpawn() has no caller, and GlobalEventDispatcher.Stop()
+        // - run from BotsController.StopGettingInfo when a raid ends - nulls about twenty other events but not
+        // _onStopBotSpawn. Each finished raid's spawn records (with their profiles) therefore stayed reachable. This
+        // nulls that one field right after Stop(); during a raid nothing is different.
         private static readonly AccessTools.FieldRef<GlobalEventDispatcher, Action> StopBotSpawnEvent =
             AccessTools.FieldRefAccess<GlobalEventDispatcher, Action>("_onStopBotSpawn");
 
@@ -103,26 +105,28 @@ namespace CactusPie.RamCleanerInterval
 
         // ---------------------------------------------------------------- dead bot brains
 
-        // AICoreController (one per raid) takes the dead bots' brains out of its agent list every frame but never empties
-        // its to-remove list, so it grows all raid and keeps every dead bot's brain (and through it the BotOwner) alive.
-        // A prefix: brains are queued during the agent loop, so emptying afterwards would drop them before removal.
+        // Checked in Assembly-CSharp 4.1: AICoreController (one per raid, a BotsController field) queues dead bots' agents
+        // in _listToDel through RemoveNodeController, takes them out of _listAgents at the top of every Update, and never
+        // empties _listToDel (Clear() only empties the other two sets). So every agent that ever died stays referenced
+        // until the raid ends and is looked up again each frame. After Update, entries that are already gone from
+        // _listAgents are dropped; ones queued during this Update are still in _listAgents and are left for the next one.
         private static bool s_brainsFailed;
+        private static HashSet<AICoreAgentBase> s_agents;
+        private static readonly Predicate<AICoreAgentBase> NotRunning = agent => s_agents != null && !s_agents.Contains(agent);
 
-        private static void AiUpdatePrefix(AICoreController __instance)
+        private static void AiUpdatePostfix(AICoreController __instance)
         {
             try
             {
-                if (DeadBrains == null || !DeadBrains.Value || !__instance._enable || __instance._listToDel.Count == 0)
+                if (DeadBrains == null || !DeadBrains.Value || __instance._listToDel.Count == 0)
                 {
                     return;
                 }
 
-                foreach (AICoreAgentBase agent in __instance._listToDel)
-                {
-                    __instance._listAgents.Remove(agent);
-                }
-
-                __instance._listToDel.Clear();
+                // A cached predicate over a static field: no closure (= no garbage) per frame.
+                s_agents = __instance._listAgents;
+                __instance._listToDel.RemoveWhere(NotRunning);
+                s_agents = null;
             }
             catch (Exception ex)
             {
@@ -132,10 +136,11 @@ namespace CactusPie.RamCleanerInterval
 
         // ---------------------------------------------------------------- per-bot coroutine
 
-        // Player.LateUpdate calls StartFovCoroutine for every living player every frame. For a third-person body (every bot)
-        // the coroutine sets RibcageScaleCurrent to 1, waits for the end of the frame and resets a ribcage scale that is
-        // only ever changed by the first-person strategy. Doing both now saves an iterator and a Coroutine object per bot
-        // per frame (30 bots at 120 fps: 3,600 pieces of garbage a second while the game's GC is off in raid).
+        // Checked in Assembly-CSharp 4.1: Player.LateUpdate calls ProceduralWeaponAnimation.StartFovCoroutine every frame
+        // for every living player, which allocates an iterator and a Coroutine. With ThirdPersonStrategy (other players
+        // and bots) the coroutine only sets RibcageScaleCurrent to 1 and, after the frame, resets the ribcage and hands
+        // scale - and that reset does nothing when the ribcage's local z scale is already 1. When both are already 1
+        // the whole coroutine is a no-op, so it is not started; in every other case the game runs it as usual.
         private static readonly AccessTools.FieldRef<ProceduralWeaponAnimation, IProceduralAnimationStrategy> Strategy =
             AccessTools.FieldRefAccess<ProceduralWeaponAnimation, IProceduralAnimationStrategy>("_strategy");
 
@@ -150,9 +155,8 @@ namespace CactusPie.RamCleanerInterval
                     return true;
                 }
 
-                __instance.ResetFovAdjustments(player);
-                player.RibcageScaleCurrent = 1f;
-                return false;
+                bool nothingToDo = player.RibcageScaleCurrent == 1f && UnityEngine.Mathf.Approximately(player.PlayerBones.Ribcage.Original.localScale.z, 1f);
+                return !nothingToDo;
             }
             catch (Exception ex)
             {
