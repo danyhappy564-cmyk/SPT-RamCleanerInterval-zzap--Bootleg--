@@ -189,6 +189,7 @@ namespace CactusPie.RamCleanerInterval
                                   (_profiler.Measuring ? ", mod profiler measuring" : string.Empty);
 
             BindSettings();
+            GameFixes.Apply(new HarmonyLib.Harmony("com.cactuspie.ramcleanerinterval.fixes"), Logger);
             StartWebServer();
             StartCoroutine(EndOfFrameLoop());
 

@@ -35,6 +35,7 @@ namespace CactusPie.RamCleanerInterval
             ["16. 세션 보고서 (그래프 페이지)"] = "16. Session report (chart page)",
             ["17. [실험] 무거운 모드 아이템 찾기"] = "17. [Experimental] Find heavy mod items",
             ["18. 웹 페이지 (브라우저로 보기·설정, 127.0.0.1)"] = "18. Web page (view · settings in a browser, 127.0.0.1)",
+            ["19. 게임 자체 메모리 낭비 고치기"] = "19. Fix the game's own memory waste",
         };
 
         /// <summary>English (name, description) per "section|key". Missing entries fall back to Korean.</summary>
@@ -169,6 +170,10 @@ namespace CactusPie.RamCleanerInterval
             // 18. Web page
             ["18. Web page|Enabled"] = new[] { "Enable the web page", "While the game runs, open http://127.0.0.1:6977/ in a browser for the live view (memory · FPS · server · time-left charts), the session report including the raid in progress, and all of these settings (changes apply at once). The 'open web page' button in section 05 opens it too. Only this PC can open it, and it does almost nothing while nobody is looking.\nWith the server part from the zip (SPT_Runtime\\user\\mods\\RamCleanerInterval.Server) it is also listed as 'RAM Cleaner' in the SPT launcher's mod pages (server and game on the same PC)." },
             ["18. Web page|Port"] = new[] { "Port number", "The number at the end of the address (http://127.0.0.1:number/). If it says 'could not start' because another program uses it, pick another number. Changing it restarts the page right away.\n6969 is the SPT server's own port and can't be used. The 6969 address in the launcher's mod pages (/ramcleaner/) is the server part showing this page from inside the server, so leave this as it is." },
+            // 19. Game memory fixes
+            ["19. Game memory fixes|Bot spawn data after raid"] = new[] { "Let go of bot spawn records after the raid", "Every time the game tries to spawn bots (failed attempts too) it hooks a record holding those bots' whole profiles onto an event list that lives as long as the game. At raid end it empties all its other lists but not this one, so raid after raid the old spawn records stay in memory until you quit. With this on, exactly that list is emptied the moment the raid ends (nothing changes during a raid). The log shows '[fix] raid end: let go of N spawn records'." },
+            ["19. Game memory fixes|Dead bot brains"] = new[] { "Empty the dead bots' AI list", "Every frame the game takes dead bots' AI out of its run list, but never empties its 'to remove' list. So every dead bot's AI (and the bot behind it) is held in memory until the raid ends, and that whole list is walked again every frame. With this on, what was removed is dropped from the list. Living bots are untouched." },
+            ["19. Game memory fixes|Per-bot coroutine garbage"] = new[] { "No per-bot garbage every frame", "Every frame, for every living bot, the game makes a new little job (a coroutine) that resets the body's chest scale to 1 at the end of the frame - for bots it is always 1 already. 30 bots at 120 fps make 3,600 pieces of garbage a second, which pile up because the GC is off in raid. With this on, the same thing is done right away without making a new job. Your own character is not touched." },
             ["18. Web page|Allow LAN"] = new[] { "Allow other devices on the network", "When on, a phone or another PC can open it with this PC's IP address (e.g. http://192.168.0.10:6977/). Anyone on the same network can then change the settings, and Windows Firewall may ask for permission the first time. Only turn it on at home." },
         };
     }

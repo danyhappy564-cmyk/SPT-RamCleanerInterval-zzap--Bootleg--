@@ -9,6 +9,9 @@
    - Repository: [matsixx/SPTVRAMCleaner](https://github.com/matsixx/SPTVRAMCleaner)
    - License: GNU GPL v3.0.
    - The "raid start asset unload" feature is based on that mod and reworked here.
+3. **TominoCZ** — Smoothie (ideas for the three fixes in section 19, written anew for this mod)
+   - Repository: [TominoCZ/Smoothie](https://github.com/TominoCZ/Smoothie)
+   - License: CC BY-NC-SA 4.0
 
 - **This Port By:** R_F (danyhappy564-cmyk) — unofficial, AI-assisted port. Not affiliated with or endorsed by the original author.
 
@@ -22,9 +25,9 @@
 
 ## 변경 이력
 
-- 2026-10-14 02:27 — **v2.14.0 릴리즈 준비:** F12에 보이는 모드 버전, 서버 부품 버전, 빌드가 만드는 zip 이름(`RamCleanerInterval-2.14.0-SPT4.1.zip`)을 모두 2.14.0으로 맞춤. 릴리즈 노트 3종(`changelog/RELEASE_NOTES_v2.14.0.md`·`_arca.txt`·`_discord.md`) 작성 — 이전 릴리즈 v2.13.0(`v2130`) 대비 실제 기능 변화는 '누수 범인 이름 찾기' 하나(게임 미검증). dotnet이 없는 환경이라 빌드는 못 해 봄(버전 숫자만 바꿈).
+- 2026-10-18 10:11 — **다음 버전(2.15.0 예정) 작업:** ① F12 '19. 게임 자체 메모리 낭비 고치기' 새로 추가 — 레이드 끝난 봇 스폰 기록이 게임을 끌 때까지 남던 것, 죽은 봇 AI가 레이드 끝까지 붙잡혀 있던 것, 봇마다 매 프레임 쓸데없는 작업(쓰레기)을 만들던 것 세 가지를 고침(셋 다 게임 동작은 그대로, 기본 켜짐, 모드 '꺼짐'이면 같이 꺼짐). ② 웹 페이지에 **'잡동사니·그래픽' 탭** 추가 — Tyrian-DeClutterer(zzap 2.1.0 이상)가 있으면 그 모드 설정 전체를 브라우저에서 바꾸고 현재 상태를 볼 수 있음(서버 최적화 탭과 같은 방식, 언어 따라감). ③ 서버 최적화 탭의 '서버로 보냄' 안내가 CompoundingPerf의 게임 쪽 항목(09번)에는 해당 없다는 문구로 바뀜. 아이디어 출처 Smoothie(TominoCZ), 4.1 게임 코드로 확인 후 새로 작성. 빌드 오류 0·경고 0, 웹 탭은 게임 없이(Mono) 읽기·쓰기·프리셋까지 시험, **인게임 확인 전**.
 
-전체 변경 이력 30개는 [`changelog/`](changelog/) 폴더에 10개씩 나눠 있습니다 (번호가 클수록 최신, 지금 마지막 파일: [`CHANGELOG-003.md`](changelog/CHANGELOG-003.md)).
+전체 변경 이력 31개는 [`changelog/`](changelog/) 폴더에 10개씩 나눠 있습니다 (번호가 클수록 최신, 지금 마지막 파일: [`CHANGELOG-004.md`](changelog/CHANGELOG-004.md)).
 
 ---
 
@@ -292,8 +295,25 @@ SAIN이 쓰는 것입니다. 봇이 많을수록 봇 AI 모드 숫자가 커지�
 - **SPT 런처에서 열기**: zip의 서버 부품을 깔면 런처 '모드 페이지' 목록에 'RAM Cleaner (RamCleanerInterval)'가 뜹니다(`/ramcleaner/`, 게임이 켜져 있고 같은 PC일 때).
 - **서버 최적화 탭**: 서버 모드 [CompoundingPerf (zzap 2.2.2 이상)](https://github.com/danyhappy564-cmyk/CompoundingPerf-zzap--Bootleg-)를 같이 쓰면 나타납니다.
   서버 상태와 CompoundingPerf 설정 전부를 보고 바꿀 수 있고(0.8초 뒤 서버 적용·저장), 언어도 RAM 클리너를 따라갑니다.
+- **잡동사니·그래픽 탭**: 게임 모드 [Tyrian-DeClutterer (zzap 2.1.0 이상)](https://github.com/danyhappy564-cmyk/Tyrian-DeClutterer-zzap--bootleg-)를 같이 쓰면 나타납니다.
+  그 모드의 F12 설정 전부(프리셋·잡동사니·그래픽·실험적)를 브라우저에서 바꿀 수 있고, F12에서 바꾼 것과 똑같이 동작합니다(레이드 중이면 바로 다시 적용, 설정 파일 저장).
+  위쪽 '현재 상태' 칸에 레이드 중인지·숨긴 물체 수·로드 때 뺀 맵 데칼 수·프리셋이 3초마다 나오고, 언어는 RAM 클리너를 따라갑니다.
+
 - 게임이 레이드 로딩 등으로 멈춰 있으면 "게임이 응답하지 않습니다"가 잠깐 뜨고 저절로 다시 연결합니다.
 - 안 열리면 F12 '현재 상태'의 **'웹 페이지:'** 줄을 보세요(포트 사용 중이면 그렇게 나옴).
+
+### 19. 게임 자체 메모리 낭비 고치기
+
+게임 코드(4.1 클라이언트)를 직접 열어 확인한, 게임이 **필요 없는 메모리를 붙잡고 있거나 매 프레임 쓰레기를 만드는** 곳 세 군데를 고칩니다.
+셋 다 게임 동작은 그대로이고 기본으로 켜져 있습니다. 맨 위 '모드'가 '꺼짐'이면 같이 꺼집니다. 이 게임 버전과 안 맞으면 그 항목만 꺼지고 로그에 `[fix] ...: skipped`가 남습니다.
+
+| 항목 | 무엇이 문제였나 | 켜면 |
+|---|---|---|
+| 레이드 끝난 봇 스폰 기록 놓아주기 | 봇 스폰 시도(실패 포함)마다 그 봇들 프로필 전체가 게임 전체에 살아 있는 이벤트 목록에 걸리고, 레이드가 끝나도 이것만 안 비워져 판이 쌓일수록 남음 | 레이드가 끝나는 순간 그 목록만 비움(레이드 중엔 아무것도 안 바꿈). 로그 `[fix] raid end: let go of N spawn records` |
+| 죽은 봇 AI 목록 비우기 | 죽은 봇의 AI를 실행 목록에서 빼는 '뺄 목록'을 게임이 한 번도 안 비워서, 죽은 봇 전부가 레이드 끝까지 메모리에 남고 매 프레임 다시 훑음 | 뺀 것은 목록에서 지움. 살아 있는 봇은 그대로 |
+| 봇마다 매 프레임 생기는 쓰레기 없애기 | 봇마다 매 프레임 '몸통 크기 1로 되돌리기' 작업을 새로 만듦(봇 30명·120fps면 초당 3,600개, 레이드 중엔 GC가 꺼져 쌓임) | 같은 일을 그 자리에서 바로 함. 내 캐릭터는 안 건드림 |
+
+아이디어는 Smoothie(TominoCZ)에서 가져왔고, 4.1 게임 코드로 확인한 뒤 이 모드에 맞게 새로 짰습니다(Smoothie와 같이 써도 충돌은 없지만 같은 일을 두 번 하니 한쪽만 권장). **인게임 확인 전**입니다.
 
 ## 원인 찾는 법 (추천 순서)
 

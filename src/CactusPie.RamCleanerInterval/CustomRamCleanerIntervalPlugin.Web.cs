@@ -47,6 +47,7 @@ namespace CactusPie.RamCleanerInterval
         private void TickWeb(float now)
         {
             SyncCompoundingPerfLanguage(now);
+            SyncDeClutterLanguage(now);
             if (_webRestartAt >= 0f && now >= _webRestartAt)
             {
                 _webRestartAt = -1f;
@@ -277,6 +278,14 @@ namespace CactusPie.RamCleanerInterval
                         return WebServer.Response.Json(post ? OnMain(() => ApplyCompoundingPerfSetting(cpKey, cpValue)) : OnMain(BuildCompoundingPerfSettingsJson));
                     case "/api/cp/status":
                         return WebServer.Response.Json(OnMain(() => BuildCompoundingPerfStatusJson(post)));
+                    case "/declutter":
+                        return new WebServer.Response { Body = OnMain(DeClutterPage) };
+                    case "/api/tyr/settings":
+                        string tyrKey = WebServer.Form(body, "key");
+                        string tyrValue = WebServer.Form(body, "value");
+                        return WebServer.Response.Json(post ? OnMain(() => ApplyDeClutterSetting(tyrKey, tyrValue)) : OnMain(BuildDeClutterSettingsJson));
+                    case "/api/tyr/status":
+                        return WebServer.Response.Json(OnMain(BuildDeClutterStatusJson));
                     case "/api/action":
                         string name = WebServer.Form(body, "name");
                         return post ? WebServer.Response.Json(OnMain(() => RunWebAction(name))) : null;
@@ -327,6 +336,7 @@ namespace CactusPie.RamCleanerInterval
                    Link("history", "history", Loc.L("지난 기록", "History")) +
                    Link("settings", "settings", Loc.L("설정", "Settings")) +
                    (!(CompoundingPerfPlugin is null) ? Link("server", "server", Loc.L("서버 최적화", "Server optimisation")) : string.Empty) +
+                   (!(DeClutterPlugin is null) ? Link("declutter", "declutter", Loc.L("잡동사니·그래픽", "DeClutter")) : string.Empty) +
                    "<button type=\"button\" id=\"lang\" class=\"lang\" data-to=\"" + (Loc.En ? LanguageKorean : LanguageEnglish) + "\">" +
                    (Loc.En ? "한국어" : "English") + "</button></nav>";
         }
@@ -421,8 +431,10 @@ namespace CactusPie.RamCleanerInterval
             return Shell(Loc.L("RAM 클리너 — 설정", "RAM Cleaner — settings"), "settings", content, SettingsStrings("api/settings", null), "settings.js");
         }
 
-        /// <summary>Texts and endpoints for settings.js (this plugin's settings, or CompoundingPerf's with a status endpoint).</summary>
-        private static string SettingsStrings(string api, string statusApi)
+        /// <summary>Texts and endpoints for settings.js (this plugin's settings, or another plugin's with a status endpoint).
+        /// <paramref name="sentNote"/>: shown after each change (CompoundingPerf: "sent to the server"); <paramref name="reloadAll"/>:
+        /// read every value again after each change (DeClutter: changing an item switches its preset to "Custom").</summary>
+        private static string SettingsStrings(string api, string statusApi, string sentNote = null, bool reloadAll = false)
         {
             return Strings(
                 "api", api,
@@ -438,7 +450,8 @@ namespace CactusPie.RamCleanerInterval
                 "presetApplied", Loc.L("모드를 적용했습니다 — 아래 값들이 바뀌었습니다.", "Mode applied — the values below changed."),
                 "moving", Loc.L("포트를 {0}(으)로 바꿨습니다. 새 주소로 이동합니다...", "Port changed to {0}. Moving to the new address..."),
                 "webOff", Loc.L("웹 페이지를 껐습니다. 다시 켜려면 F12 '18. 웹 페이지'에서 켜세요.", "The web page is off now. Turn it back on in F12 '18. Web page'."),
-                "cpSent", Loc.L("게임에 적용됨 — 0.8초 뒤 서버로 보냅니다. 결과는 위 '서버 상태'에 나옵니다.", "Applied in the game — sent to the server 0.8 s later. The result shows under 'Server status' above."));
+                "cpSent", sentNote ?? string.Empty,
+                "reloadAll", reloadAll ? "1" : string.Empty);
         }
 
         /// <summary>Main thread: the session report including the raid in progress.</summary>

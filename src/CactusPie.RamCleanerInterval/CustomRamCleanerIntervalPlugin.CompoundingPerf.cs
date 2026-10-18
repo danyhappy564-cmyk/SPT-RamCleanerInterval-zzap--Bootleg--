@@ -70,9 +70,12 @@ namespace CactusPie.RamCleanerInterval
         }
 
         /// <summary>CompoundingPerf's F12 entries (status drawer and hidden entries left out), current language.</summary>
-        private static IEnumerable<WebSetting> CompoundingPerfSettings()
+        private static IEnumerable<WebSetting> CompoundingPerfSettings() => PluginWebSettings(CompoundingPerfPlugin);
+
+        /// <summary>Another plugin's F12 entries as web rows (CompoundingPerf, DeClutter): read from its
+        /// ConfigurationManagerAttributes tags by reflection; status drawers and hidden entries are left out.</summary>
+        private static IEnumerable<WebSetting> PluginWebSettings(BaseUnityPlugin plugin)
         {
-            BaseUnityPlugin plugin = CompoundingPerfPlugin;
             if (plugin is null)
             {
                 yield break;
@@ -157,7 +160,11 @@ namespace CactusPie.RamCleanerInterval
                 H(Loc.L("서버에서 다시 읽기", "Read again from the server")) + "</button></div></section>" +
                 "<div class=\"toolbar\"><input type=\"search\" id=\"q\" placeholder=\"" + H(Loc.L("설정 검색 (예: 정리, 압축, 로그)", "Search settings (e.g. cleanup, compression, log)")) +
                 "\" aria-label=\"" + H(Loc.L("설정 검색", "Search settings")) + "\"></div><p class=\"msg\" id=\"msg\" role=\"status\"></p><div id=\"list\"></div>";
-            return Shell(Loc.L("RAM 클리너 — 서버 최적화", "RAM Cleaner — server optimisation"), "server", content, SettingsStrings("api/cp/settings", "api/cp/status"), "settings.js");
+            return Shell(Loc.L("RAM 클리너 — 서버 최적화", "RAM Cleaner — server optimisation"), "server", content,
+                SettingsStrings("api/cp/settings", "api/cp/status",
+                    Loc.L("게임에 적용됨 — 서버 설정은 0.8초 뒤 서버로 보냅니다(09번 게임 쪽 항목은 게임에서만). 결과는 위 '서버 상태'에 나옵니다.",
+                          "Applied in the game — server settings are sent to the server 0.8 s later (the game-side items in 09 stay in the game). The result shows under 'Server status' above.")),
+                "settings.js");
         }
     }
 }

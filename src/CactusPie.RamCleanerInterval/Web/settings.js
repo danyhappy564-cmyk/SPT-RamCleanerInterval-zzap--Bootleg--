@@ -4,7 +4,8 @@
   var $ = function (id) { return document.getElementById(id); };
   var esc = window.rcEsc;
   var API = T.api || 'api/settings', STATUS = T.statusApi || '';
-  var LANGUAGE = '0. Mode|Language', CP_LANGUAGE = 'Language|Language', PRESET = '0. Mode|Preset', PORT = '18. Web page|Port', WEB = '18. Web page|Enabled';
+  var LANGUAGE = '0. Mode|Language', CP_LANGUAGE = 'Language|Language', TYR_LANGUAGE = '1. General|Language';
+  var PRESET = '0. Mode|Preset', TYR_PRESET = '1. General|Preset', PORT = '18. Web page|Port', WEB = '18. Web page|Enabled';
 
   function control(it) {
     if (it.type === 'bool') {
@@ -46,9 +47,10 @@
       state.className = 'state ok';
       state.textContent = T.saved;
       setTimeout(function () { if (state.textContent === T.saved) state.textContent = ''; }, 2500);
-      if (it.key === LANGUAGE || it.key === CP_LANGUAGE) { location.reload(); return; }
-      if (STATUS) { $('msg').textContent = T.cpSent; setTimeout(status, 1500); }
-      if (it.key === PRESET) { $('msg').textContent = T.presetApplied; load(); return; }
+      if (it.key === LANGUAGE || it.key === CP_LANGUAGE || it.key === TYR_LANGUAGE) { location.reload(); return; }
+      if (STATUS) { if (T.cpSent) $('msg').textContent = T.cpSent; setTimeout(status, 1500); }
+      if (it.key === PRESET || it.key === TYR_PRESET) { $('msg').textContent = T.presetApplied; load(); return; }
+      if (T.reloadAll) { $('msg').textContent = T.saved; load(); return; }
       if (it.key === PORT) {
         $('msg').textContent = T.moving.replace('{0}', r.v);
         // Behind the SPT server's proxy the address stays the same (it reads the new port itself).
@@ -114,7 +116,7 @@
       .then(function (d) { if (d.error) { $('msg').textContent = d.error; return; } render(d); }, function () { $('msg').textContent = T.offline; });
   }
 
-  // CompoundingPerf tab: server status from its plugin, refreshed every 3 s.
+  // CompoundingPerf / DeClutter tabs: status from that plugin, refreshed every 3 s.
   function status(refresh) {
     var req = refresh ? window.rcPost(STATUS, {}) : fetch(STATUS, { cache: 'no-store' }).then(function (r) { return r.json(); });
     return req.then(function (d) {

@@ -28,6 +28,7 @@ namespace CactusPie.RamCleanerInterval
         private const string SessionReportSection = "16. Session report";
         private const string HeavyItemsSection = "17. Experimental heavy items";
         private const string WebSection = "18. Web page";
+        private const string FixSection = "19. Game memory fixes";
         private const string InternalSection = "Internal";
 
         // Bumped when a default has to be forced onto existing .cfg files (a saved value beats a new default).
@@ -52,6 +53,7 @@ namespace CactusPie.RamCleanerInterval
         private const string SessionReportCategory = "16. 세션 보고서 (그래프 페이지)";
         private const string HeavyItemsCategory = "17. [실험] 무거운 모드 아이템 찾기";
         private const string WebCategory = "18. 웹 페이지 (브라우저로 보기·설정, 127.0.0.1)";
+        private const string FixCategory = "19. 게임 자체 메모리 낭비 고치기";
 
         // Mode / language. Values are stored in the .cfg, so they are fixed bilingual labels.
         private const string LanguageKorean = "한국어";
@@ -191,6 +193,7 @@ namespace CactusPie.RamCleanerInterval
             BindSessionReportSettings();
             BindHeavyItemSettings();
             BindWebSettings();
+            BindGameFixSettings();
             MigrateSettings();
             ApplyLanguage();
             _language.SettingChanged += (_, __) => ApplyLanguage();
@@ -241,6 +244,7 @@ namespace CactusPie.RamCleanerInterval
         {
             Loc.En = _language.Value == LanguageEnglish;
             _cpLanguagePending = true; // CompoundingPerf follows (applied in the next once-a-second tick)
+            _tyrLanguagePending = true; // and DeClutter
             foreach (LocalizedEntry entry in _localized)
             {
                 Loc.Settings.TryGetValue(entry.Key, out string[] english);
@@ -323,6 +327,11 @@ namespace CactusPie.RamCleanerInterval
             // Leak hunt: the two snapshot trackers (each hitches 0.2-1 s every few minutes, so never in the others).
             _leakEnabled.Value = leak;
             _objectsEnabled.Value = leak;
+
+            // The game fixes are part of "cleaning": on in every mode, off only in "off" (the plain game).
+            GameFixes.BotSpawnData.Value = on;
+            GameFixes.DeadBrains.Value = on;
+            GameFixes.BotCoroutine.Value = on;
 
             Logger.LogInfo($"Mode applied: {preset}");
         }
@@ -596,6 +605,25 @@ namespace CactusPie.RamCleanerInterval
             _webLan = Bind(WebSection, WebCategory, "Allow LAN", "다른 기기 접속 허용 (같은 네트워크)", false,
                 "켜면 휴대폰·다른 PC에서 이 PC의 IP 주소(예: http://192.168.0.10:6977/)로 열 수 있습니다. " +
                 "대신 같은 네트워크의 누구나 설정을 바꿀 수 있고, 처음 켤 때 윈도우 방화벽 허용 창이 뜰 수 있습니다. 집 네트워크에서만 켜세요.",
+                null, 8);
+        }
+
+        private void BindGameFixSettings()
+        {
+            GameFixes.BotSpawnData = Bind(FixSection, FixCategory, "Bot spawn data after raid", "레이드 끝난 봇 스폰 기록 놓아주기", true,
+                "게임은 봇을 스폰하려 할 때마다(실패한 시도 포함) 그 봇들의 프로필 전체를 담은 기록을 게임 전체에 살아 있는 이벤트 목록에 걸어 둡니다. " +
+                "레이드가 끝나면 다른 목록은 다 비우는데 이것만 안 비워서, 판이 쌓일수록 지난 레이드들의 봇 기록이 게임을 끌 때까지 메모리에 남습니다. " +
+                "켜면 레이드가 끝나는 순간 그 목록만 비웁니다(레이드 중에는 아무것도 바꾸지 않음). 로그에 '[fix] raid end: let go of N spawn records'가 남습니다.",
+                null, 10);
+
+            GameFixes.DeadBrains = Bind(FixSection, FixCategory, "Dead bot brains", "죽은 봇 AI 목록 비우기", true,
+                "게임은 죽은 봇의 AI를 매 프레임 실행 목록에서 빼는데, '뺄 목록'을 한 번도 비우지 않습니다. 그래서 레이드 동안 죽은 봇 전부의 AI(와 그 봇 정보)가 레이드가 끝날 때까지 메모리에 붙잡혀 있고, " +
+                "매 프레임 그 목록 전체를 다시 훑습니다. 켜면 뺀 것은 목록에서 지웁니다. 살아 있는 봇은 그대로입니다.",
+                null, 9);
+
+            GameFixes.BotCoroutine = Bind(FixSection, FixCategory, "Per-bot coroutine garbage", "봇마다 매 프레임 생기는 쓰레기 없애기", true,
+                "게임은 매 프레임 살아 있는 봇마다 작은 작업(코루틴)을 하나씩 새로 만들어 '프레임 끝에 몸통 크기를 1로 되돌리기'를 합니다. 봇 몸통 크기는 늘 1이라 하는 일이 없는데도요. " +
+                "봇 30명·120fps면 초당 3,600개의 쓰레기가 생기고, 레이드 중엔 GC가 꺼져 있어 그대로 쌓입니다. 켜면 같은 일을 그 자리에서 바로 하고 새로 만들지 않습니다. 내 캐릭터는 건드리지 않습니다.",
                 null, 8);
         }
 
