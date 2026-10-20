@@ -147,6 +147,14 @@ namespace CactusPie.RamCleanerInterval
         private int _alive = -1;
         private int _dead = -1;
         private int _deadAtStart;
+
+        // Players seen dead in this game world, by profile id - so the death count only goes up. "Ever existed - alive" dropped
+        // whenever a body left GameWorld's player lists: SAIN's sim corpse cleanup does that (2026-10-20 sims: dead 24 -> 0,
+        // 30 min raids reported as 4-5 deaths at 3033 / 1961 MB each). The world is kept by instance id, not by reference,
+        // so the last raid's GameWorld isn't held after the raid.
+        private readonly HashSet<string> _deadProfiles = new HashSet<string>();
+        private readonly HashSet<Player> _aliveScratch = new HashSet<Player>();
+        private int _deadWorldId;
         private long _nativeAtStart = -1;
         private bool _startUnloadDone;
         private long _nativeBaseline = -1;
@@ -1606,7 +1614,12 @@ namespace CactusPie.RamCleanerInterval
                     }
 
                     _alive = alive;
-                    _dead = Math.Max(0, world.AllPlayersEverExisted.Count() - _alive);
+                    _dead = CountDead(world);
+                }
+                else
+                {
+                    _deadProfiles.Clear();
+                    _deadWorldId = 0;
                 }
             }
             catch (Exception)
@@ -1624,6 +1637,37 @@ namespace CactusPie.RamCleanerInterval
             {
                 _deathSamples.Add(new KeyValuePair<int, long>(_dead, _snapshot.Native));
             }
+        }
+
+        /// <summary>Players that died in this game world so far (never goes down, see _deadProfiles).</summary>
+        private int CountDead(GameWorld world)
+        {
+            int worldId = world.GetInstanceID();
+            if (worldId != _deadWorldId)
+            {
+                _deadProfiles.Clear();
+                _deadWorldId = worldId;
+            }
+
+            _aliveScratch.Clear();
+            foreach (Player player in world.AllAlivePlayersList)
+            {
+                if (player != null)
+                {
+                    _aliveScratch.Add(player);
+                }
+            }
+
+            foreach (Player player in world.AllPlayersEverExisted)
+            {
+                if (player != null && !_aliveScratch.Contains(player) && !string.IsNullOrEmpty(player.ProfileId))
+                {
+                    _deadProfiles.Add(player.ProfileId);
+                }
+            }
+
+            _aliveScratch.Clear();
+            return _deadProfiles.Count;
         }
 
         /// <summary>"+X MB per death" over the whole raid and over the last 10 deaths.</summary>
